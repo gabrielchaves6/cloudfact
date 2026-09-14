@@ -13,12 +13,12 @@ const wrap = (fn) => async (args) => {
 
 server.registerTool('deploy', {
   title: 'Publicar página estática',
-  description: 'Publica uma pasta (ou um único .html) da VM em uma URL pública na Cloudflare. Backend "tunnel" (padrão sem conta): servidor local + cloudflared quick tunnel, URL *.trycloudflare.com, processo fica vivo em background e sobrevive ao fim da sessão. Backend "pages": Cloudflare Pages (URL fixa *.pages.dev), exige CLOUDFLARE_API_TOKEN. Idempotente: se o mesmo caminho já está no ar, devolve a URL existente. Devolve JSON com url (e privateUrl quando private=true, que já inclui #key=...).',
+  description: 'Publica uma pasta (ou um único .html) da VM em uma URL pública na Cloudflare. Backend "tunnel" (padrão sem conta): servidor local + cloudflared quick tunnel, URL *.trycloudflare.com, processo fica vivo em background e sobrevive ao fim da sessão. Backend "workers": Cloudflare Workers com assets estáticos (URL fixa https://<nome>.<sub>.workers.dev), exige login (`cloudfact login --device`), padrão quando logado. Idempotente no tunnel: se o mesmo caminho já está no ar, devolve a URL existente. Devolve JSON com url (e privateUrl quando private=true, que já inclui #key=...).',
   inputSchema: {
     path: z.string().describe('Caminho absoluto da pasta ou do arquivo .html a publicar'),
     name: z.string().optional().describe('Nome do deploy (slug). Padrão: nome da pasta/arquivo'),
-    private: z.boolean().optional().describe('Protege com chave: só quem abrir o privateUrl (#key=...) vê o conteúdo'),
-    backend: z.enum(['auto', 'tunnel', 'pages']).optional().describe('auto = pages se houver token configurado, senão tunnel'),
+    private: z.boolean().optional().describe('Protege com chave: só quem abrir o privateUrl (#key=...) vê o conteúdo. Só no backend tunnel'),
+    backend: z.enum(['auto', 'tunnel', 'workers']).optional().describe('auto = workers se logado na Cloudflare, senão tunnel'),
     restart: z.boolean().optional().describe('Força reiniciar mesmo se já estiver no ar (gera URL nova no túnel)'),
   },
 }, wrap((a) => cf.deploy(a)));
@@ -43,7 +43,7 @@ server.registerTool('stop', {
 
 server.registerTool('remove', {
   title: 'Remover deploy',
-  description: 'Para (se estiver rodando) e apaga o registro e logs do deploy.',
+  description: 'Para (se estiver rodando) e apaga o registro e logs do deploy. No backend workers, apaga também o worker na Cloudflare.',
   inputSchema: { name: z.string() },
 }, wrap((a) => cf.remove(a.name)));
 
@@ -55,7 +55,7 @@ server.registerTool('logs', {
 
 server.registerTool('doctor', {
   title: 'Diagnóstico',
-  description: 'Verifica cloudflared, credenciais do Pages, backend padrão e deploys ativos.',
+  description: 'Verifica cloudflared, login na Cloudflare, backend padrão e deploys ativos.',
   inputSchema: {},
 }, wrap(() => cf.doctor()));
 

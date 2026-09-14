@@ -99,8 +99,33 @@ export async function login({ token, accountId, interactive = process.stdin.isTT
   return { ok: true, tokenId: verify.id, accountId: accountId || null, accountName: account?.name || null, config: path.join(HOME, 'config.json') };
 }
 
+/**
+ * Login OAuth por navegador via `wrangler login --device`: imprime link + código (via onPrompt) e espera a aprovação.
+ * Serve para VMs sem browser: o usuário aprova em qualquer dispositivo.
+ */
+export async function loginDevice({ onPrompt = (t) => process.stderr.write(t), timeoutMs = 6 * 60_000 } = {}) {
+  const { spawn } = await import('node:child_process');
+  const cfg = readConfig();
+  const wrangler = cfg.wranglerCommand ? cfg.wranglerCommand.split(' ') : ['npx', '--yes', 'wrangler@4'];
+  const child = spawn(wrangler[0], [...wrangler.slice(1), 'login', '--device', '--browser=false'], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CI: '1' } });
+  let out = '';
+  let prompted = false;
+  const onData = (c) => {
+    out += c;
+    if (!prompted && /enter the code:\s*\S+/s.test(out)) { prompted = true; onPrompt(out.replace(/^.*?To authorize/s, 'To authorize')); }
+  };
+  child.stdout.on('data', onData); child.stderr.on('data', onData);
+  const code = await new Promise((resolve) => {
+    const t = setTimeout(() => { child.kill(); resolve(-1); }, timeoutMs);
+    child.on('exit', (c) => { clearTimeout(t); resolve(c); });
+  });
+  if (code !== 0 || !/Successfully logged in/i.test(out)) throw new Error(`login por navegador não concluiu (exit ${code}):\n${out.trim().split('\n').slice(-6).join('\n')}`);
+  writeConfig({ ...readConfig(), cloudflareAuth: 'wrangler', loggedInAt: new Date().toISOString() });
+  return { ok: true, source: 'wrangler', config: path.join(HOME, 'config.json') };
+}
+
 export function logout() {
-  const { cloudflareApiToken, cloudflareAccountId, cloudflareAccountName, loggedInAt, ...rest } = readConfig();
+  const { cloudflareApiToken, cloudflareAccountId, cloudflareAccountName, cloudflareAuth, loggedInAt, ...rest } = readConfig();
   writeConfig(rest);
-  return { ok: true, removed: Boolean(cloudflareApiToken) };
+  return { ok: true, removed: Boolean(cloudflareApiToken || cloudflareAuth), note: cloudflareAuth === 'wrangler' ? 'credencial OAuth do wrangler continua em ~/.config/.wrangler; rode `npx wrangler logout` para revogar' : undefined };
 }

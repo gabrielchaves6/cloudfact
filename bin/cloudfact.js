@@ -5,7 +5,7 @@ import * as cf from '../src/lib.js';
 const HELP = `cloudfact ${cf.VERSION} — publica páginas estáticas da VM na Cloudflare
 
 uso:
-  cloudfact deploy [caminho] [--name n] [--private] [--backend auto|tunnel|pages] [--restart] [--json]
+  cloudfact deploy [caminho] [--name n] [--private] [--backend auto|tunnel|workers] [--restart] [--json]
   cloudfact list [--json]
   cloudfact status <nome> [--json]
   cloudfact stop <nome> | --all
@@ -13,13 +13,14 @@ uso:
   cloudfact logs <nome> [-n 40]
   cloudfact doctor
   cloudfact setup                        (baixa o cloudflared para ~/.cloudfact/bin se faltar)
-  cloudfact login [--token T] [--account-id ID]   (autentica na Cloudflare para o backend pages)
+  cloudfact login [--token T] [--account-id ID]   (token de API da Cloudflare, para o backend workers)
+  cloudfact login --device                        (autoriza no navegador de qualquer dispositivo; sem colar token)
   cloudfact logout
   cloudfact config get | set <chave> <valor>
   cloudfact mcp            (inicia o servidor MCP via stdio)
 
 caminho = pasta (serve tudo, index.html na raiz) ou um único .html.
-backend auto = pages se houver CLOUDFLARE_API_TOKEN, senão túnel rápido (trycloudflare.com, sem conta).`;
+backend auto = workers (URL fixa *.workers.dev) se estiver logado na Cloudflare, senão túnel rápido (trycloudflare.com, sem conta).`;
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -28,7 +29,7 @@ const { values, positionals } = parseArgs({
     backend: { type: 'string', default: 'auto' }, restart: { type: 'boolean', default: false },
     json: { type: 'boolean', default: false }, all: { type: 'boolean', default: false },
     n: { type: 'string', default: '40' }, help: { type: 'boolean', short: 'h', default: false },
-    token: { type: 'string' }, 'account-id': { type: 'string' },
+    token: { type: 'string' }, 'account-id': { type: 'string' }, device: { type: 'boolean', default: false },
   },
 });
 const [cmd, ...rest] = positionals;
@@ -61,9 +62,10 @@ try {
     case 'doctor': print(await cf.doctor()); break;
     case 'setup': { const { installCloudflared } = await import('../src/setup.js'); print({ cloudflared: await installCloudflared({ log: console.error }) }); break; }
     case 'login': {
-      const { login } = await import('../src/setup.js');
+      const { login, loginDevice } = await import('../src/setup.js');
+      if (values.device) { const r = await loginDevice(); print(values.json ? r : 'autenticado via wrangler (OAuth). backend padrão agora é "workers" (URL fixa); --backend tunnel continua disponível.'); break; }
       const r = await login({ token: values.token || process.env.CLOUDFLARE_API_TOKEN, accountId: values['account-id'] });
-      print(values.json ? r : `autenticado. conta: ${r.accountName || '?'} (${r.accountId || 'sem id'}). backend padrão agora é "pages"; use --backend tunnel para o túnel.`);
+      print(values.json ? r : `autenticado. conta: ${r.accountName || '?'} (${r.accountId || 'sem id'}). backend padrão agora é "workers"; use --backend tunnel para o túnel.`);
       break;
     }
     case 'logout': { const { logout } = await import('../src/setup.js'); print(await logout()); break; }

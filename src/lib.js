@@ -34,10 +34,17 @@ export function findCloudflared(cfg = readConfig()) {
   return null;
 }
 
+export const WRANGLER_CONFIG = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), '.wrangler', 'config', 'default.toml');
+
+/** Credenciais do Pages: token de API (env/config) ou login OAuth do wrangler (`wrangler login`). */
 export function pagesCredentials(cfg = readConfig()) {
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || cfg.cloudflareAccountId || null;
   const token = process.env.CLOUDFLARE_API_TOKEN || cfg.cloudflareApiToken;
-  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || cfg.cloudflareAccountId;
-  return token ? { token, accountId } : null;
+  if (token) return { source: 'token', token, accountId };
+  try {
+    if (/oauth_token\s*=\s*"[^"]+"/.test(fs.readFileSync(WRANGLER_CONFIG, 'utf8'))) return { source: 'wrangler', token: null, accountId };
+  } catch {}
+  return null;
 }
 
 export function slug(s) {
@@ -81,7 +88,7 @@ export function listDeploys() {
 export function logs(name, lines = 40) {
   const d = deployDir(name);
   const out = {};
-  for (const f of ['host.log', 'tunnel.log', 'pages.log']) {
+  for (const f of ['host.log', 'tunnel.log', 'wrangler.log']) {
     const p = path.join(d, f);
     if (fs.existsSync(p)) out[f] = fs.readFileSync(p, 'utf8').trim().split('\n').slice(-lines).join('\n');
   }
@@ -110,8 +117,10 @@ export async function deploy(opts = {}) {
   const name = slug(opts.name || t.defaultName);
   const cfg = readConfig();
   let backend = opts.backend || 'auto';
-  if (backend === 'auto') backend = pagesCredentials(cfg) ? 'pages' : 'tunnel';
-  if (backend === 'pages') return deployPages({ ...t, name, cfg, opts });
+  if (backend === 'auto') backend = pagesCredentials(cfg) ? 'workers' : 'tunnel';
+  if (backend === 'pages') backend = 'workers'; // alias antigo
+  if (backend === 'workers') return deployWorkers({ ...t, name, cfg, opts });
+  if (backend !== 'tunnel') throw new Error(`backend desconhecido: ${backend}`);
   return deployTunnel({ ...t, name, cfg, opts });
 }
 
@@ -168,39 +177,65 @@ function run(cmd, args, { env, cwd, logFile } = {}) {
   return { status: r.status, text, error: r.error };
 }
 
-async function deployPages({ mode, root, file, name, cfg, opts }) {
+/** Copia `src` para `dst` ignorando dotfiles, node_modules e symlinks. Devolve o número de arquivos. */
+function stageDir(src, dst) {
+  fs.rmSync(dst, { recursive: true, force: true });
+  fs.mkdirSync(dst, { recursive: true });
+  let n = 0;
+  const walk = (from, to) => {
+    for (const e of fs.readdirSync(from, { withFileTypes: true })) {
+      if (e.name.startsWith('.') || e.name === 'node_modules' || e.isSymbolicLink()) continue;
+      const a = path.join(from, e.name), b = path.join(to, e.name);
+      if (e.isDirectory()) { fs.mkdirSync(b); walk(a, b); }
+      else if (e.isFile()) { fs.copyFileSync(a, b); n += 1; }
+    }
+  };
+  walk(src, dst);
+  return n;
+}
+
+function wranglerCmd(cfg) {
+  return cfg.wranglerCommand ? cfg.wranglerCommand.split(' ') : ['npx', '--yes', 'wrangler@4'];
+}
+function wranglerEnv(creds) {
+  const env = { ...process.env, CI: '1', WRANGLER_SEND_METRICS: 'false' };
+  if (creds?.token) env.CLOUDFLARE_API_TOKEN = creds.token;
+  if (creds?.accountId) env.CLOUDFLARE_ACCOUNT_ID = creds.accountId;
+  return env;
+}
+
+/** Backend "workers": Cloudflare Workers com assets estáticos (sucessor do Pages). URL fixa https://<nome>.<sub>.workers.dev */
+async function deployWorkers({ mode, root, file, name, cfg, opts }) {
   const creds = pagesCredentials(cfg);
-  if (!creds) throw new Error('backend "pages" exige CLOUDFLARE_API_TOKEN (e CLOUDFLARE_ACCOUNT_ID). Use `cloudfact config set cloudflareApiToken ...` ou o backend "tunnel".');
+  if (!creds) throw new Error('backend "workers" exige login na Cloudflare: `cloudfact login --device` (navegador) ou `cloudfact login --token <token>`. Ou use --backend tunnel.');
+  if (opts.private) throw new Error('--private só existe no backend tunnel por enquanto; no Workers a URL é pública.');
   const d = deployDir(name);
   fs.mkdirSync(d, { recursive: true, mode: 0o700 });
-  const logFile = path.join(d, 'pages.log');
-  let dir = root;
+  const logFile = path.join(d, 'wrangler.log');
+  const site = path.join(d, 'site');
+  let files;
   if (mode === 'file') {
-    dir = path.join(d, 'site');
-    fs.rmSync(dir, { recursive: true, force: true });
-    fs.mkdirSync(dir, { recursive: true });
-    fs.copyFileSync(file, path.join(dir, 'index.html'));
+    fs.rmSync(site, { recursive: true, force: true });
+    fs.mkdirSync(site, { recursive: true });
+    fs.copyFileSync(file, path.join(site, 'index.html'));
+    files = 1;
+  } else {
+    files = stageDir(root, site);
+    if (!files) throw new Error(`pasta sem arquivos publicáveis: ${root}`);
   }
-  const env = { ...process.env, CLOUDFLARE_API_TOKEN: creds.token, CI: '1', WRANGLER_SEND_METRICS: 'false' };
-  if (creds.accountId) env.CLOUDFLARE_ACCOUNT_ID = creds.accountId;
-  const wrangler = cfg.wranglerCommand ? cfg.wranglerCommand.split(' ') : ['npx', '--yes', 'wrangler@4'];
-  const w = (args) => run(wrangler[0], [...wrangler.slice(1), ...args], { env, logFile });
-
-  writeState(name, { name, backend: 'pages', mode, root: root || null, file: file || null, status: 'deploying', startedAt: new Date().toISOString(), project: name });
-  let r = w(['pages', 'deploy', dir, '--project-name', name, '--branch', 'main', '--commit-dirty=true']);
-  if (r.status !== 0 && /project.*not found|does not exist|Create a new project/i.test(r.text)) {
-    const c = w(['pages', 'project', 'create', name, '--production-branch', 'main']);
-    if (c.status !== 0) throw new Error(`falha ao criar projeto Pages "${name}":\n${c.text.slice(-1500)}`);
-    r = w(['pages', 'deploy', dir, '--project-name', name, '--branch', 'main', '--commit-dirty=true']);
-  }
+  const prev = readState(name) || {};
+  writeState(name, { ...prev, name, backend: 'workers', mode, root: root || null, file: file || null, status: 'deploying', startedAt: prev.startedAt || new Date().toISOString(), files });
+  const w = wranglerCmd(cfg);
+  const cwd = path.join(d, 'empty'); fs.mkdirSync(cwd, { recursive: true }); // cwd neutro: sem autodetecção de projeto
+  const r = run(w[0], [...w.slice(1), 'deploy', '--name', name, '--assets', site, '--compatibility-date', new Date().toISOString().slice(0, 10)], { env: wranglerEnv(creds), cwd, logFile });
+  const clean = r.text.replace(/\x1b\[[0-9;]*m/g, '');
   if (r.status !== 0) {
-    writeState(name, { ...readState(name), status: 'error', error: r.text.slice(-1500) });
-    throw new Error(`wrangler pages deploy falhou:\n${r.text.slice(-1500)}`);
+    writeState(name, { ...readState(name), status: 'error', error: clean.slice(-1500) });
+    throw new Error(`wrangler deploy falhou:\n${clean.slice(-1500)}`);
   }
-  const urls = r.text.match(/https:\/\/[a-z0-9.-]+\.pages\.dev/g) || [];
-  const deploymentUrl = urls[0] || null;
-  const url = `https://${name}.pages.dev`;
-  const s = { ...readState(name), status: 'deployed', url, deploymentUrl, deployedAt: new Date().toISOString() };
+  const url = (clean.match(/https:\/\/[a-z0-9.-]+\.workers\.dev/g) || []).find((u) => u.includes(`//${name}.`)) || null;
+  const version = (clean.match(/Version ID:\s*([0-9a-f-]+)/) || [])[1] || null;
+  const s = { ...readState(name), status: 'deployed', url, versionId: version, deployedAt: new Date().toISOString(), error: null };
   writeState(name, s);
   return { ...summarize(s), reused: false };
 }
@@ -208,7 +243,7 @@ async function deployPages({ mode, root, file, name, cfg, opts }) {
 export async function stop(name) {
   const s = readState(name);
   if (!s) throw new Error(`deploy "${name}" não existe`);
-  if (s.backend === 'pages') return { name, backend: 'pages', note: 'Pages não tem processo local; use `remove` para esquecer o registro (o site continua no Cloudflare).' };
+  if (s.backend === 'workers') return { name, backend: 'workers', note: 'Workers não tem processo local; `remove` apaga o worker na Cloudflare.' };
   for (const pid of [s.hostPid, s.tunnelPid]) if (alive(pid)) { try { process.kill(pid, 'SIGTERM'); } catch {} }
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline && (alive(s.hostPid) || alive(s.tunnelPid))) await sleep(150);
@@ -227,8 +262,15 @@ export async function remove(name) {
   const s = readState(name);
   if (!s) throw new Error(`deploy "${name}" não existe`);
   if (s.backend === 'tunnel') await stop(name);
+  let remote;
+  if (s.backend === 'workers' && s.status === 'deployed') {
+    const cfg = readConfig();
+    const w = wranglerCmd(cfg);
+    const r = run(w[0], [...w.slice(1), 'delete', '--name', name, '--force'], { env: wranglerEnv(pagesCredentials(cfg)), cwd: path.join(deployDir(name), 'empty') });
+    remote = r.status === 0 ? 'worker apagado' : `falha ao apagar worker: ${r.text.replace(/\x1b\[[0-9;]*m/g, '').slice(-400)}`;
+  }
   fs.rmSync(deployDir(name), { recursive: true, force: true });
-  return { name, removed: true };
+  return { name, removed: true, remote };
 }
 
 export async function status(name, { check = true } = {}) {
@@ -258,8 +300,8 @@ export async function doctor() {
   return {
     version: VERSION, node: process.version, home: HOME,
     cloudflared: cf ? { path: cf, version: cfVersion } : { missing: true, hint: 'será baixado automaticamente no primeiro deploy (ou rode `cloudfact setup`)' },
-    pages: creds ? { configured: true, accountId: creds.accountId || null, accountName: cfg.cloudflareAccountName || null } : { configured: false, hint: 'rode `cloudfact login` no terminal (ou defina CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID)' },
-    defaultBackend: creds ? 'pages' : 'tunnel',
+    workers: creds ? { configured: true, source: creds.source, accountId: creds.accountId || null, accountName: cfg.cloudflareAccountName || null } : { configured: false, hint: 'rode `cloudfact login --device` (autoriza no navegador) ou `cloudfact login --token <token>`' },
+    defaultBackend: creds ? 'workers' : 'tunnel',
     deploys: deploys.map((s) => ({ name: s.name, backend: s.backend, status: s.status, url: s.url })),
   };
 }
