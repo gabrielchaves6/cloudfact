@@ -12,6 +12,9 @@ uso:
   cloudfact rm <nome>
   cloudfact logs <nome> [-n 40]
   cloudfact doctor
+  cloudfact setup                        (baixa o cloudflared para ~/.cloudfact/bin se faltar)
+  cloudfact login [--token T] [--account-id ID]   (autentica na Cloudflare para o backend pages)
+  cloudfact logout
   cloudfact config get | set <chave> <valor>
   cloudfact mcp            (inicia o servidor MCP via stdio)
 
@@ -25,6 +28,7 @@ const { values, positionals } = parseArgs({
     backend: { type: 'string', default: 'auto' }, restart: { type: 'boolean', default: false },
     json: { type: 'boolean', default: false }, all: { type: 'boolean', default: false },
     n: { type: 'string', default: '40' }, help: { type: 'boolean', short: 'h', default: false },
+    token: { type: 'string' }, 'account-id': { type: 'string' },
   },
 });
 const [cmd, ...rest] = positionals;
@@ -55,6 +59,14 @@ try {
     case 'rm': case 'remove': print(await cf.remove(need(rest[0]))); break;
     case 'logs': { const l = cf.logs(need(rest[0]), Number(values.n)); for (const [f, t] of Object.entries(l)) console.log(`== ${f}\n${t}\n`); break; }
     case 'doctor': print(await cf.doctor()); break;
+    case 'setup': { const { installCloudflared } = await import('../src/setup.js'); print({ cloudflared: await installCloudflared({ log: console.error }) }); break; }
+    case 'login': {
+      const { login } = await import('../src/setup.js');
+      const r = await login({ token: values.token || process.env.CLOUDFLARE_API_TOKEN, accountId: values['account-id'] });
+      print(values.json ? r : `autenticado. conta: ${r.accountName || '?'} (${r.accountId || 'sem id'}). backend padrão agora é "pages"; use --backend tunnel para o túnel.`);
+      break;
+    }
+    case 'logout': { const { logout } = await import('../src/setup.js'); print(await logout()); break; }
     case 'config': {
       const c = cf.readConfig();
       if (rest[0] === 'set') { c[need(rest[1])] = need(rest[2]); cf.writeConfig(c); print({ saved: rest[1] }); }

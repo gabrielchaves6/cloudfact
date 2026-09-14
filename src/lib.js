@@ -24,7 +24,7 @@ export function writeConfig(cfg) {
 }
 
 export function findCloudflared(cfg = readConfig()) {
-  const candidates = [cfg.cloudflaredPath, process.env.CLOUDFLARED, 'cloudflared',
+  const candidates = [cfg.cloudflaredPath, process.env.CLOUDFLARED, path.join(HOME, 'bin', 'cloudflared'), 'cloudflared',
     path.join(os.homedir(), '.local/bin/cloudflared'), '/usr/local/bin/cloudflared', '/usr/bin/cloudflared'].filter(Boolean);
   for (const c of candidates) {
     if (c.includes('/')) { if (fs.existsSync(c)) return c; continue; }
@@ -126,7 +126,10 @@ async function deployTunnel({ mode, root, file, name, cfg, opts }) {
     }
     await stop(name);
   }
-  if (!findCloudflared(cfg)) throw new Error('cloudflared não encontrado. Instale: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/');
+  if (!findCloudflared(cfg)) {
+    const { installCloudflared } = await import('./setup.js');
+    await installCloudflared({ log: (m) => process.stderr.write(m + '\n') });
+  }
 
   const key = opts.private ? crypto.randomBytes(32).toString('base64url') : null;
   const state = {
@@ -254,9 +257,9 @@ export async function doctor() {
   const deploys = listDeploys();
   return {
     version: VERSION, node: process.version, home: HOME,
-    cloudflared: cf ? { path: cf, version: cfVersion } : null,
-    pages: creds ? { configured: true, accountId: creds.accountId || null } : { configured: false, hint: 'defina CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID ou `cloudfact config set cloudflareApiToken <token>`' },
-    defaultBackend: creds ? 'pages' : (cf ? 'tunnel' : 'nenhum'),
+    cloudflared: cf ? { path: cf, version: cfVersion } : { missing: true, hint: 'será baixado automaticamente no primeiro deploy (ou rode `cloudfact setup`)' },
+    pages: creds ? { configured: true, accountId: creds.accountId || null, accountName: cfg.cloudflareAccountName || null } : { configured: false, hint: 'rode `cloudfact login` no terminal (ou defina CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID)' },
+    defaultBackend: creds ? 'pages' : 'tunnel',
     deploys: deploys.map((s) => ({ name: s.name, backend: s.backend, status: s.status, url: s.url })),
   };
 }

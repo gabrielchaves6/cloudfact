@@ -26,7 +26,7 @@ Se as tools MCP não estiverem carregadas nesta sessão, use o CLI equivalente v
    - A URL clicável (use `privateUrl` quando existir, ela já carrega a chave no `#key=`).
    - Uma linha dizendo que é túnel rápido (URL muda se reiniciar; processo segue vivo em background) ou Pages (URL fixa).
    - Como parar: `cloudfact stop <nome>` ou a tool `stop`.
-4. **Se falhar**, rode `doctor` e `logs` do deploy, explique a causa e o que fazer (por exemplo `cloudflared` ausente, ou token do Pages faltando).
+4. **Se falhar**, rode `doctor` e `logs` do deploy, explique a causa e o que fazer. Se for falta de credencial do Pages, peça ao usuário para rodar `cloudfact login` no terminal (não peça o token no chat) ou use `backend: "tunnel"`.
 
 ## Regras
 
