@@ -1,14 +1,14 @@
 ---
 name: cloudfact
-description: Publish a folder, an HTML file, or a running app (local port, or a port on a machine reachable over SSH) to a public Cloudflare URL with one command (/cloudfact <path> [--private] [--name x] [--tunnel|--workers] | /cloudfact expose <port> [--ssh user@host] [--private]). Use whenever the user asks to "host", "publish", "put online", "expose", "open in a browser" or "give me a link" for an HTML file, a static site or a server app.
-argument-hint: <folder or file.html> [--private] [--name name] [--tunnel|--workers] [--restart]  |  expose <port> [--ssh user@host] [--private]
+description: Publish a folder, an HTML file, or a running app (local port, or a port on a machine reachable over SSH) to a public Cloudflare URL with one command (/cloudfact <path> [--public] [--name x] [--tunnel|--workers] | /cloudfact expose <port> [--ssh user@host] [--public]). Use whenever the user asks to "host", "publish", "put online", "expose", "open in a browser" or "give me a link" for an HTML file, a static site or a server app.
+argument-hint: <folder or file.html> [--public] [--name name] [--tunnel|--workers] [--restart]  |  expose <port> [--ssh user@host] [--public]
 ---
 
 # /cloudfact — publish a static page to Cloudflare
 
 The `cloudfact` MCP server is available (tools `deploy`, `expose`, `list`, `status`, `stop`, `remove`, `logs`, `doctor`).
 If the MCP tools are not loaded in this session, use the equivalent CLI through the shell:
-`cloudfact deploy <path> [--private] [--name n] [--backend tunnel|workers] [--restart] --json`.
+`cloudfact deploy <path> [--public] [--name n] [--backend tunnel|workers] [--restart] --json`.
 
 ## Apps with a server
 
@@ -26,7 +26,7 @@ If the argument starts with `expose`, or the user wants to publish something tha
    - Convert to an absolute path.
 2. **Publish** with the `deploy` tool:
    - `path`: absolute path.
-   - `private: true` if `--private` was passed or the content is sensitive (internal data, credentials, dashboards). When in doubt with business data, prefer private. Private forces `backend: "tunnel"`.
+   - Deploys are private by default (key-gated link). Pass `public: true` only when the user explicitly asks for an open page. `expires` (e.g. `"24h"`) for temporary links.
    - `name`: from `--name`, otherwise keep the default.
    - `backend`: `"tunnel"` for `--tunnel`, `"workers"` for `--workers`; otherwise `auto` (workers with a fixed URL when signed in, quick tunnel otherwise; `doctor` shows which).
    - `restart: true` for `--restart`.

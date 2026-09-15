@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { HOME, VERSION, readConfig } from './config.js';
 import { deployTunnel, newKey, stopTunnel } from './backends/tunnel/index.js';
+import { rotateWorkersKey } from './backends/workers/index.js';
 import { expiryFrom } from './services/duration.js';
 import { deleteWorker, deployWorkers } from './backends/workers/index.js';
 import { cloudflaredVersion, findCloudflared } from './services/cloudflared.js';
@@ -49,12 +50,14 @@ export function resolveBackend(choice: DeployOptions['backend']): Backend {
 export async function deploy(opts: DeployOptions = {}): Promise<DeployResult> {
   const t = resolveTarget(opts.path);
   const name = slug(opts.name ?? t.defaultName);
-  const backend = opts.private ? 'tunnel' : resolveBackend(opts.backend);
-  const common = { name, mode: t.mode, root: t.root, file: t.file, private: Boolean(opts.private) };
-  if (backend === 'workers') return deployWorkers(common);
+  const priv = opts.private === true || !opts.public;
+  const backend = resolveBackend(opts.backend);
+  const common = { name, mode: t.mode, root: t.root, file: t.file, private: priv };
+  if (backend === 'workers')
+    return deployWorkers({ ...common, key: priv ? newKey() : null, keyExpiresAt: priv ? expiryFrom(opts.expires) : null });
   return deployTunnel({
     ...common,
-    keyExpiresAt: opts.private ? expiryFrom(opts.expires) : null,
+    keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
     restart: Boolean(opts.restart),
     timeoutMs: opts.timeoutMs ?? 45_000,
   });
@@ -89,10 +92,15 @@ export async function expose(opts: ExposeOptions): Promise<DeployResult> {
 export async function rotate(name: string, opts: { expires?: string } = {}): Promise<DeployResult> {
   const s = effectiveState(name);
   if (!s) throw new Error(`deploy "${name}" does not exist`);
-  if (s.backend !== 'tunnel') throw new Error('rotate applies to tunnel deploys only');
-  if (!isLive(s) || !s.url) throw new Error(`deploy "${name}" is not running`);
   const key = newKey();
-  const next = { ...s, key, keyExpiresAt: expiryFrom(opts.expires), privateUrl: `${s.url}/#key=${key}` };
+  const keyExpiresAt = expiryFrom(opts.expires);
+  if (s.backend === 'workers') {
+    if (s.status !== 'deployed' || !s.url) throw new Error(`deploy "${name}" is not deployed`);
+    rotateWorkersKey(name, key, keyExpiresAt);
+  } else if (!isLive(s) || !s.url) {
+    throw new Error(`deploy "${name}" is not running`);
+  }
+  const next = { ...s, key, keyExpiresAt, privateUrl: `${s.url}/#key=${key}` };
   writeState(name, next);
   return { ...summarize(next), reused: false };
 }

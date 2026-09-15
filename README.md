@@ -3,9 +3,10 @@
 Publish a folder, a single HTML file, or an app that is already listening on a port (locally or on a machine reachable over SSH) to a public Cloudflare URL with one command. Ships as a **CLI**, an **MCP server** (works with Claude Code, Codex, Cursor, Claude Desktop, Windsurf…) and a `/cloudfact` skill.
 
 ```
-cloudfact deploy ./report.html                       # → https://xxxx.trycloudflare.com          (no account needed)
-cloudfact login --device && cloudfact deploy ./site  # → https://site.<your-sub>.workers.dev     (fixed URL, your account)
-cloudfact expose 3000 --ssh ubuntu@my-vm             # → https://xxxx.trycloudflare.com          (app on another machine, over SSH)
+cloudfact deploy ./report.html                       # → https://xxxx.trycloudflare.com/#key=…   (private link, no account needed)
+cloudfact login --device && cloudfact deploy ./site  # → https://site.<your-sub>.workers.dev/#key=… (fixed URL, your account)
+cloudfact deploy ./site --public                     # open to anyone with the URL
+cloudfact expose 3000 --ssh ubuntu@my-vm             # app on another machine, over SSH (private link)
 ```
 
 ## Install
@@ -41,7 +42,7 @@ cloudfact expose 3000 --ssh ubuntu@10.0.0.5    # app running on another machine,
 cloudfact expose 8080 --ssh myvm --public      # `myvm` = Host alias from ~/.ssh/config; no key gate
 ```
 
-Apps are **private by default** (key-gated link, see below); pass `--public` to opt out. With `--ssh`, cloudfact opens an `ssh -N -L` port-forward to the remote app and publishes through the local tunnel. Nothing is installed on the remote machine; it only needs key-based SSH access (`--ssh-port`, `--identity`, `--strict-host-key` available). The forward and the tunnel are supervised and reconnect if they drop. MCP tool: `expose`.
+Apps are **private by default** (key-gated link, see below), like every other deploy; pass `--public` to opt out. With `--ssh`, cloudfact opens an `ssh -N -L` port-forward to the remote app and publishes through the local tunnel. Nothing is installed on the remote machine; it only needs key-based SSH access (`--ssh-port`, `--identity`, `--strict-host-key` available). The forward and the tunnel are supervised and reconnect if they drop. MCP tool: `expose`.
 
 ## Sign in to your Cloudflare account (optional, for a fixed URL)
 
@@ -63,9 +64,9 @@ After signing in the default backend becomes `workers`; `--backend tunnel` remai
 | `tunnel` (default, signed out) | no       | `https://<random>.trycloudflare.com` | local static server + `cloudflared` quick tunnel in a detached process that outlives the agent session and reconnects if the tunnel drops                                                                                                                       |
 | `workers` (default, signed in) | yes      | `https://<name>.<sub>.workers.dev`   | Cloudflare Workers with static assets, the successor of Pages (Cloudflare no longer creates new Pages projects). `wrangler deploy --assets`, fetched via `npx` on first use. Uploads a copy without dotfiles/symlinks/node_modules. `remove` deletes the worker |
 
-## Private links
+## Private links (the default)
 
-`--private` (the default for `expose`) generates a 256-bit key; the returned URL carries it in `#key=…`, which browsers never send to servers. Without the cookie every route returns only a gate page, which exchanges the fragment for an HttpOnly, Secure cookie via `POST /api/session`. That endpoint is rate-limited per visitor IP (10 attempts/minute) and failures are logged to the deploy's `host.log`.
+Every deploy is private unless you pass `--public`: cloudfact generates a 256-bit key; the returned URL carries it in `#key=…`, which browsers never send to servers. Without the cookie every route returns only a gate page, which exchanges the fragment for an HttpOnly, Secure cookie via `POST /api/session`. That endpoint is rate-limited per visitor IP (10 attempts/minute) and failures are logged to the deploy's `host.log`.
 
 ```
 cloudfact deploy ./report --private --expires 24h   # link stops working after 24h
@@ -73,7 +74,7 @@ cloudfact rotate report                             # new key now; old link and 
 cloudfact rotate report --expires 2h                # new key with a lifetime
 ```
 
-`rotate` works on a running deploy without restarting it (and turns a public deploy private). Tunnel backend only, for now. For identity-based access (sign in with Google or a one-time email code) see the roadmap item on Cloudflare Access.
+`rotate` works on a live deploy without restarting it (on the tunnel backend it also turns a public deploy private). On the `workers` backend the gate is a tiny generated Worker running in front of the files (`run_worker_first`), the key is a Worker secret, and rate limiting uses Cloudflare's rate-limit binding. For identity-based access (one-time email code, Google…) see `--access` below.
 
 Local server safety: serves only what is inside the published folder, never dotfiles, no path traversal. A single `.html` is served alone (relative assets are not included; publish the folder in that case).
 
@@ -86,7 +87,7 @@ Skill `/cloudfact <path> [--private] [--name x] [--tunnel|--workers]` lives in `
 ## CLI
 
 ```
-cloudfact deploy [path] [--name n] [--private] [--expires 24h] [--backend auto|tunnel|workers] [--restart] [--json]
+cloudfact deploy [path] [--name n] [--public] [--expires 24h] [--backend auto|tunnel|workers] [--restart] [--json]
 cloudfact expose <port> [--name n] [--public] [--expires 24h] [--ssh user@host] [--ssh-port 22] [--identity key] [--strict-host-key] [--restart] [--json]
 cloudfact rotate <name> [--expires 24h]
 cloudfact list | status <name> | stop <name>|--all | rm <name> | logs <name> [-n 40]

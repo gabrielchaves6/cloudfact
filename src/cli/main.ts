@@ -4,7 +4,7 @@ import * as cf from '../cloudfact.js';
 const HELP = `cloudfact ${cf.VERSION} — publish static pages from this machine to Cloudflare
 
 usage:
-  cloudfact deploy [path] [--name n] [--private] [--expires 24h] [--backend auto|tunnel|workers] [--restart] [--json]
+  cloudfact deploy [path] [--name n] [--public] [--expires 24h] [--backend auto|tunnel|workers] [--restart] [--json]
   cloudfact expose <port> [--name n] [--public] [--expires 24h] [--ssh user@host] [--ssh-port 22] [--identity key] [--strict-host-key] [--restart] [--json]
   cloudfact rotate <name> [--expires 24h]
   cloudfact list [--json]
@@ -19,7 +19,7 @@ usage:
   cloudfact logout
   cloudfact mcp                                  (MCP server over stdio)
 
-path = a folder (served whole, index.html at the root) or a single .html file.
+path = a folder (served whole, index.html at the root) or a single .html file. Private (key-gated link) by default; --public to open.
 expose = publish an app already listening on a port, here or on a machine reachable over SSH (HTTP + WebSocket). Private by default.
 rotate = new private key for a live deploy (old link and sessions stop working).
 backend auto = workers (fixed *.workers.dev URL) when signed in to Cloudflare, otherwise quick tunnel (trycloudflare.com, no account).`;
@@ -64,6 +64,7 @@ export async function main(argv: string[]): Promise<number> {
       const r = await cf.deploy({
         path: rest[0],
         name: values.name,
+        public: values.public,
         private: values.private,
         expires: values.expires,
         backend: values.backend as cf.BackendChoice,

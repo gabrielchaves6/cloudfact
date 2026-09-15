@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-15
+
+### Security
+
+- Every deploy is private by default (`--public` to opt out), on both backends.
+- Private mode on the `workers` backend: a generated gate Worker runs in front of the assets, the key is a Worker secret, sessions are rate-limited with Cloudflare's rate-limit binding, and `rotate` works without a redeploy.
+
 ## [0.5.0] - 2026-09-15
 
 ### Security

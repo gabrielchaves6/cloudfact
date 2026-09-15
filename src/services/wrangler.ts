@@ -40,7 +40,7 @@ export interface RunResult {
 /** Runs wrangler synchronously, appending its output to logFile when given. */
 export function runWrangler(
   args: string[],
-  opts: { cfg?: Config; creds?: Credentials | null; cwd?: string; logFile?: string } = {},
+  opts: { cfg?: Config; creds?: Credentials | null; cwd?: string; logFile?: string; input?: string } = {},
 ): RunResult {
   const cfg = opts.cfg ?? readConfig();
   const [cmd, ...base] = wranglerCommand(cfg);
@@ -48,6 +48,7 @@ export function runWrangler(
     encoding: 'utf8',
     env: wranglerEnv(opts.creds ?? credentials(cfg)),
     cwd: opts.cwd,
+    input: opts.input,
     maxBuffer: 16 * 1024 * 1024,
   });
   const text = stripAnsi((r.stdout ?? '') + (r.stderr ?? ''));

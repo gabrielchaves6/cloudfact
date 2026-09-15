@@ -66,6 +66,9 @@ export interface ExposeOptions {
 export interface DeployOptions {
   path?: string;
   name?: string;
+  /** Deploys are private by default; set public=true to publish without the key gate. */
+  public?: boolean;
+  /** @deprecated private is the default; kept for compatibility (true forces private). */
   private?: boolean;
   /** Key lifetime for private deploys, e.g. "30m", "24h", "7d". Default: no expiry. */
   expires?: string;

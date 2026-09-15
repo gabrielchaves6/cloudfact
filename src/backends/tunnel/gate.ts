@@ -32,7 +32,7 @@ export interface Gate {
   enabled(): boolean;
 }
 
-const GATE_HTML = `<!doctype html><html lang="en"><meta charset="utf-8"><title>cloudfact</title>
+export const GATE_HTML = `<!doctype html><html lang="en"><meta charset="utf-8"><title>cloudfact</title>
 <style>body{font:16px system-ui;margin:3rem;color:#333}</style><body><p id="m">Signing in…</p>
 <script>(async()=>{const el=document.getElementById('m');const m=location.hash.match(/key=([^&]+)/);
 if(!m){el.textContent='Private page: open it through the full link (with #key=…).';return}
