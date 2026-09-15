@@ -5,12 +5,13 @@
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import net from 'node:net';
 import type { Duplex } from 'node:stream';
-import { gateRequest, hasAccessCookie } from './gate.js';
+import { clientIp, staticGate, type Gate } from './gate.js';
 
 export interface ProxyOptions {
   targetPort: number;
   targetHost?: string;
   key?: string | null;
+  gate?: Gate;
 }
 
 const HOP_BY_HOP = new Set([
@@ -30,14 +31,19 @@ export function createProxy(opts: ProxyOptions): {
 } {
   const host = opts.targetHost ?? '127.0.0.1';
   const port = opts.targetPort;
+  const gate = opts.gate ?? staticGate(opts.key);
 
   const handler = (req: IncomingMessage, res: ServerResponse): void => {
-    if (gateRequest(req, res, opts.key)) return;
+    if (gate.handle(req, res)) return;
     const headers: Record<string, string | string[] | undefined> = {};
-    for (const [k, v] of Object.entries(req.headers)) if (!HOP_BY_HOP.has(k)) headers[k] = v;
+    // drop hop-by-hop headers and any client-supplied X-Forwarded-*; we set trustworthy ones below
+    for (const [k, v] of Object.entries(req.headers))
+      if (!HOP_BY_HOP.has(k) && !k.startsWith('x-forwarded-') && k !== 'x-real-ip') headers[k] = v;
+    const ip = clientIp(req);
     headers['x-forwarded-proto'] = 'https';
     headers['x-forwarded-host'] = req.headers.host;
-    headers['x-forwarded-for'] = req.socket.remoteAddress ?? '';
+    headers['x-forwarded-for'] = ip;
+    headers['x-real-ip'] = ip;
     const upstream = http.request({ host, port, method: req.method, path: req.url, headers }, (up) => {
       res.writeHead(up.statusCode ?? 502, up.headers);
       up.pipe(res);
@@ -50,7 +56,7 @@ export function createProxy(opts: ProxyOptions): {
   };
 
   const upgrade = (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
-    if (opts.key && !hasAccessCookie(req, opts.key)) {
+    if (!gate.authorized(req)) {
       socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
       return;
     }

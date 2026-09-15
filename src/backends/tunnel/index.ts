@@ -9,6 +9,7 @@ import { alive, deployDir, effectiveState, isLive, readLogs, readState, summariz
 import type { DeployMode, DeployResult, DeployState, SshTarget } from '../../types.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+export const newKey = (): string => crypto.randomBytes(32).toString('base64url');
 
 export interface TunnelTarget {
   name: string;
@@ -19,6 +20,8 @@ export interface TunnelTarget {
   targetPort?: number | null;
   ssh?: SshTarget | null;
   private: boolean;
+  /** ISO expiry for the private key (null = never) */
+  keyExpiresAt?: string | null;
   restart: boolean;
   timeoutMs: number;
 }
@@ -26,7 +29,8 @@ export interface TunnelTarget {
 const sameSsh = (a?: SshTarget | null, b?: SshTarget | null) =>
   (a?.destination ?? null) === (b?.destination ?? null) &&
   (a?.port ?? null) === (b?.port ?? null) &&
-  (a?.identity ?? null) === (b?.identity ?? null);
+  (a?.identity ?? null) === (b?.identity ?? null) &&
+  Boolean(a?.strictHostKey) === Boolean(b?.strictHostKey);
 
 export async function deployTunnel(t: TunnelTarget): Promise<DeployResult> {
   const existing = effectiveState(t.name);
@@ -38,7 +42,10 @@ export async function deployTunnel(t: TunnelTarget): Promise<DeployResult> {
       (existing.targetPort ?? null) === (t.targetPort ?? null) &&
       sameSsh(existing.ssh, t.ssh) &&
       Boolean(existing.key) === t.private;
-    if (sameTarget && !t.restart) return { ...summarize(await waitForUrl(t.name, t.timeoutMs)), reused: true };
+    if (sameTarget && !t.restart) {
+      if (t.keyExpiresAt !== undefined && existing.key) writeState(t.name, { ...existing, keyExpiresAt: t.keyExpiresAt });
+      return { ...summarize(await waitForUrl(t.name, t.timeoutMs)), reused: true };
+    }
     await stopTunnel(t.name);
   }
   if (!findCloudflared(readConfig())) await installCloudflared(log.info);
@@ -51,7 +58,8 @@ export async function deployTunnel(t: TunnelTarget): Promise<DeployResult> {
     file: t.file,
     targetPort: t.targetPort ?? null,
     ssh: t.ssh ?? null,
-    key: t.private ? crypto.randomBytes(32).toString('base64url') : null,
+    key: t.private ? newKey() : null,
+    keyExpiresAt: t.private ? (t.keyExpiresAt ?? null) : null,
     status: 'starting',
     url: null,
     privateUrl: null,

@@ -6,13 +6,16 @@
 import fs from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
-import { COOKIE_NAME, gateRequest } from './gate.js';
+import { staticGate, type Gate } from './gate.js';
 
 export interface StaticOptions {
   mode: 'dir' | 'file' | 'proxy';
   root?: string | null;
   file?: string | null;
+  /** Fixed key (convenience). Ignored when `gate` is given. */
   key?: string | null;
+  /** Runtime gate (supports expiry/rotation). */
+  gate?: Gate;
   cookieName?: string;
 }
 
@@ -102,12 +105,12 @@ export function safeResolve(root: string, urlPath: string): string | null {
 export function createStaticHandler(opts: StaticOptions): (req: IncomingMessage, res: ServerResponse) => void {
   const root = opts.root ? path.resolve(opts.root) : null;
   const file = opts.file ? path.resolve(opts.file) : null;
-  const cookieName = opts.cookieName ?? COOKIE_NAME;
+  const gate = opts.gate ?? staticGate(opts.key, opts.cookieName);
 
   return (req, res) => {
     const method = req.method ?? 'GET';
     const url = new URL(req.url ?? '/', 'http://localhost');
-    if (gateRequest(req, res, opts.key, cookieName)) return;
+    if (gate.handle(req, res)) return;
 
     if (method !== 'GET' && method !== 'HEAD') return send(res, 405, 'method not allowed');
 

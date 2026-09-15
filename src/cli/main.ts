@@ -4,8 +4,9 @@ import * as cf from '../cloudfact.js';
 const HELP = `cloudfact ${cf.VERSION} — publish static pages from this machine to Cloudflare
 
 usage:
-  cloudfact deploy [path] [--name n] [--private] [--backend auto|tunnel|workers] [--restart] [--json]
-  cloudfact expose <port> [--name n] [--private] [--ssh user@host] [--ssh-port 22] [--identity key] [--restart] [--json]
+  cloudfact deploy [path] [--name n] [--private] [--expires 24h] [--backend auto|tunnel|workers] [--restart] [--json]
+  cloudfact expose <port> [--name n] [--public] [--expires 24h] [--ssh user@host] [--ssh-port 22] [--identity key] [--strict-host-key] [--restart] [--json]
+  cloudfact rotate <name> [--expires 24h]
   cloudfact list [--json]
   cloudfact status <name> [--json]
   cloudfact stop <name> | --all
@@ -19,7 +20,8 @@ usage:
   cloudfact mcp                                  (MCP server over stdio)
 
 path = a folder (served whole, index.html at the root) or a single .html file.
-expose = publish an app already listening on a port, here or on a machine reachable over SSH (HTTP + WebSocket).
+expose = publish an app already listening on a port, here or on a machine reachable over SSH (HTTP + WebSocket). Private by default.
+rotate = new private key for a live deploy (old link and sessions stop working).
 backend auto = workers (fixed *.workers.dev URL) when signed in to Cloudflare, otherwise quick tunnel (trycloudflare.com, no account).`;
 
 export async function main(argv: string[]): Promise<number> {
@@ -41,6 +43,9 @@ export async function main(argv: string[]): Promise<number> {
       ssh: { type: 'string' },
       'ssh-port': { type: 'string' },
       identity: { type: 'string' },
+      public: { type: 'boolean', default: false },
+      expires: { type: 'string' },
+      'strict-host-key': { type: 'boolean', default: false },
     },
   });
   const [cmd, ...rest] = positionals;
@@ -60,6 +65,7 @@ export async function main(argv: string[]): Promise<number> {
         path: rest[0],
         name: values.name,
         private: values.private,
+        expires: values.expires,
         backend: values.backend as cf.BackendChoice,
         restart: values.restart,
       });
@@ -76,10 +82,16 @@ export async function main(argv: string[]): Promise<number> {
       const r = await cf.expose({
         port,
         name: values.name,
-        private: values.private,
+        public: values.public,
+        expires: values.expires,
         restart: values.restart,
         ssh: values.ssh
-          ? { destination: values.ssh, port: values['ssh-port'] ? Number(values['ssh-port']) : undefined, identity: values.identity }
+          ? {
+              destination: values.ssh,
+              port: values['ssh-port'] ? Number(values['ssh-port']) : undefined,
+              identity: values.identity,
+              strictHostKey: values['strict-host-key'],
+            }
           : null,
       });
       if (values.json) print(r);
@@ -104,6 +116,12 @@ export async function main(argv: string[]): Promise<number> {
     case 'status':
       print(await cf.status(need(rest[0], 'the deploy name')));
       return 0;
+    case 'rotate': {
+      const r = await cf.rotate(need(rest[0], 'the deploy name'), { expires: values.expires });
+      if (values.json) print(r);
+      else console.log(`rotated: ${r.name}\nURL: ${r.privateUrl}${r.keyExpiresAt ? `\nexpires: ${r.keyExpiresAt}` : ''}`);
+      return 0;
+    }
     case 'stop':
       print(values.all ? await cf.stopAll() : await cf.stop(need(rest[0], 'the deploy name (or --all)')));
       return 0;

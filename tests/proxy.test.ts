@@ -18,7 +18,9 @@ describe('reverse proxy (expose)', () => {
   beforeAll(async () => {
     app = http.createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ path: req.url, method: req.method, proto: req.headers['x-forwarded-proto'] }));
+      res.end(
+        JSON.stringify({ path: req.url, method: req.method, proto: req.headers['x-forwarded-proto'], xff: req.headers['x-forwarded-for'] }),
+      );
     });
     appPort = await listen(app);
     const pub = createProxy({ targetPort: appPort });
@@ -32,10 +34,14 @@ describe('reverse proxy (expose)', () => {
   });
   afterAll(() => servers.forEach((s) => s.close()));
 
-  it('forwards path, method and X-Forwarded-Proto', async () => {
-    const r = await fetch(`http://127.0.0.1:${publicPort}/api/x?y=1`, { method: 'POST', body: 'hi' });
+  it('forwards path and method; X-Forwarded-For comes from CF-Connecting-IP, never from the client', async () => {
+    const r = await fetch(`http://127.0.0.1:${publicPort}/api/x?y=1`, {
+      method: 'POST',
+      body: 'hi',
+      headers: { 'cf-connecting-ip': '198.51.100.7', 'x-forwarded-for': 'spoofed' },
+    });
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({ path: '/api/x?y=1', method: 'POST', proto: 'https' });
+    expect(await r.json()).toEqual({ path: '/api/x?y=1', method: 'POST', proto: 'https', xff: '198.51.100.7' });
   });
   it('answers 502 when the upstream is down', async () => {
     const dead = createProxy({ targetPort: 1 });

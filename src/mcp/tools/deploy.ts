@@ -19,6 +19,7 @@ export const deployTool = defineTool({
       .optional()
       .describe('Key-protected: only whoever opens privateUrl (#key=...) sees the content. Forces the tunnel backend'),
     backend: z.enum(['auto', 'tunnel', 'workers']).optional().describe('auto = workers when signed in to Cloudflare, otherwise tunnel'),
+    expires: z.string().optional().describe('Private key lifetime, e.g. "30m", "24h", "7d" (default: never expires)'),
     restart: z.boolean().optional().describe('Restart even if already live (yields a new URL on tunnel)'),
   },
   handler: (params) => deploy(params),

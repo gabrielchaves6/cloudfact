@@ -258,7 +258,10 @@ async function deployTunnel(t) {
   const existing = effectiveState(t.name);
   if (existing?.backend === "tunnel" && isLive(existing)) {
     const sameTarget = existing.mode === t.mode && existing.root === t.root && existing.file === t.file && (existing.targetPort ?? null) === (t.targetPort ?? null) && sameSsh(existing.ssh, t.ssh) && Boolean(existing.key) === t.private;
-    if (sameTarget && !t.restart) return { ...summarize(await waitForUrl(t.name, t.timeoutMs)), reused: true };
+    if (sameTarget && !t.restart) {
+      if (t.keyExpiresAt !== void 0 && existing.key) writeState(t.name, { ...existing, keyExpiresAt: t.keyExpiresAt });
+      return { ...summarize(await waitForUrl(t.name, t.timeoutMs)), reused: true };
+    }
     await stopTunnel(t.name);
   }
   if (!findCloudflared(readConfig())) await installCloudflared(log.info);
@@ -270,7 +273,8 @@ async function deployTunnel(t) {
     file: t.file,
     targetPort: t.targetPort ?? null,
     ssh: t.ssh ?? null,
-    key: t.private ? crypto.randomBytes(32).toString("base64url") : null,
+    key: t.private ? newKey() : null,
+    keyExpiresAt: t.private ? t.keyExpiresAt ?? null : null,
     status: "starting",
     url: null,
     privateUrl: null,
@@ -327,7 +331,7 @@ async function stopTunnel(name) {
     stoppedAt: (/* @__PURE__ */ new Date()).toISOString()
   });
 }
-var sleep, sameSsh;
+var sleep, newKey, sameSsh;
 var init_tunnel = __esm({
   "src/backends/tunnel/index.ts"() {
     "use strict";
@@ -336,7 +340,27 @@ var init_tunnel = __esm({
     init_cloudflared();
     init_state();
     sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    sameSsh = (a, b) => (a?.destination ?? null) === (b?.destination ?? null) && (a?.port ?? null) === (b?.port ?? null) && (a?.identity ?? null) === (b?.identity ?? null);
+    newKey = () => crypto.randomBytes(32).toString("base64url");
+    sameSsh = (a, b) => (a?.destination ?? null) === (b?.destination ?? null) && (a?.port ?? null) === (b?.port ?? null) && (a?.identity ?? null) === (b?.identity ?? null) && Boolean(a?.strictHostKey) === Boolean(b?.strictHostKey);
+  }
+});
+
+// src/services/duration.ts
+function parseDuration(input) {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*([smhdw])?\s*$/i.exec(input);
+  if (!m) throw new Error(`invalid duration "${input}" (use e.g. 30m, 24h, 7d)`);
+  const ms = Number(m[1]) * UNITS[(m[2] ?? "s").toLowerCase()];
+  if (!(ms > 0)) throw new Error(`invalid duration "${input}"`);
+  return ms;
+}
+function expiryFrom(duration3, now = Date.now()) {
+  return duration3 ? new Date(now + parseDuration(duration3)).toISOString() : null;
+}
+var UNITS;
+var init_duration = __esm({
+  "src/services/duration.ts"() {
+    "use strict";
+    UNITS = { s: 1e3, m: 6e4, h: 36e5, d: 864e5, w: 6048e5 };
   }
 });
 
@@ -634,11 +658,17 @@ async function deploy(opts = {}) {
   const backend = opts.private ? "tunnel" : resolveBackend(opts.backend);
   const common = { name, mode: t.mode, root: t.root, file: t.file, private: Boolean(opts.private) };
   if (backend === "workers") return deployWorkers(common);
-  return deployTunnel({ ...common, restart: Boolean(opts.restart), timeoutMs: opts.timeoutMs ?? 45e3 });
+  return deployTunnel({
+    ...common,
+    keyExpiresAt: opts.private ? expiryFrom(opts.expires) : null,
+    restart: Boolean(opts.restart),
+    timeoutMs: opts.timeoutMs ?? 45e3
+  });
 }
 async function expose(opts) {
   if (!Number.isInteger(opts.port) || opts.port < 1 || opts.port > 65535) throw new Error(`invalid port: ${String(opts.port)}`);
-  const ssh = opts.ssh?.destination ? { destination: opts.ssh.destination, port: opts.ssh.port, identity: opts.ssh.identity } : null;
+  const ssh = opts.ssh?.destination ? { destination: opts.ssh.destination, port: opts.ssh.port, identity: opts.ssh.identity, strictHostKey: opts.ssh.strictHostKey } : null;
+  const priv = !opts.public;
   const name = slug(opts.name ?? (ssh ? `${ssh.destination.split("@").pop()}-${opts.port}` : `port-${opts.port}`));
   return deployTunnel({
     name,
@@ -647,10 +677,21 @@ async function expose(opts) {
     file: null,
     targetPort: opts.port,
     ssh,
-    private: Boolean(opts.private),
+    private: priv,
+    keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
     restart: Boolean(opts.restart),
     timeoutMs: opts.timeoutMs ?? 45e3
   });
+}
+async function rotate(name, opts = {}) {
+  const s = effectiveState(name);
+  if (!s) throw new Error(`deploy "${name}" does not exist`);
+  if (s.backend !== "tunnel") throw new Error("rotate applies to tunnel deploys only");
+  if (!isLive(s) || !s.url) throw new Error(`deploy "${name}" is not running`);
+  const key = newKey();
+  const next = { ...s, key, keyExpiresAt: expiryFrom(opts.expires), privateUrl: `${s.url}/#key=${key}` };
+  writeState(name, next);
+  return { ...summarize(next), reused: false };
 }
 async function stop(name) {
   const s = readState(name);
@@ -711,6 +752,7 @@ var init_cloudfact = __esm({
     "use strict";
     init_config();
     init_tunnel();
+    init_duration();
     init_workers();
     init_cloudflared();
     init_state();
@@ -22982,6 +23024,7 @@ var init_deploy = __esm({
         name: external_exports.string().optional().describe("Deploy name (slug). Defaults to the folder/file name"),
         private: external_exports.boolean().optional().describe("Key-protected: only whoever opens privateUrl (#key=...) sees the content. Forces the tunnel backend"),
         backend: external_exports.enum(["auto", "tunnel", "workers"]).optional().describe("auto = workers when signed in to Cloudflare, otherwise tunnel"),
+        expires: external_exports.string().optional().describe('Private key lifetime, e.g. "30m", "24h", "7d" (default: never expires)'),
         restart: external_exports.boolean().optional().describe("Restart even if already live (yields a new URL on tunnel)")
       },
       handler: (params) => deploy(params)
@@ -22999,24 +23042,26 @@ var init_expose = __esm({
     init_define_tool();
     exposeTool = defineTool({
       name: "expose",
-      description: "Publish an app that is already listening on a port to a public *.trycloudflare.com URL (tunnel backend). Without ssh, the port is on this machine. With ssh (user@host), the app runs on another machine: cloudfact opens an SSH port-forward to it and publishes through here \u2014 nothing to install remotely (key-based SSH access required). HTTP and WebSocket traffic is proxied. private=true adds the same #key gate as static deploys. Idempotent: the same port/host already live returns the existing URL (reused=true).",
+      description: "Publish an app that is already listening on a port to a public *.trycloudflare.com URL (tunnel backend). Without ssh, the port is on this machine. With ssh (user@host), the app runs on another machine: cloudfact opens an SSH port-forward to it and publishes through here \u2014 nothing to install remotely (key-based SSH access required). HTTP and WebSocket traffic is proxied. Apps are PRIVATE by default (same #key gate as static deploys, with rate limiting and optional expiry); pass public=true to publish without the gate. Idempotent: the same port/host already live returns the existing URL (reused=true).",
       annotations: { title: "Expose a running app", readOnlyHint: false, idempotentHint: true },
       schema: {
         port: external_exports.number().int().min(1).max(65535).describe("Port the app listens on (locally, or on the SSH host)"),
         name: external_exports.string().optional().describe("Deploy name (slug). Defaults to port-<port> or <host>-<port>"),
-        private: external_exports.boolean().optional().describe("Key-protected: only whoever opens privateUrl (#key=...) reaches the app"),
+        public: external_exports.boolean().optional().describe("Publish without the key gate (default false: private)"),
+        expires: external_exports.string().optional().describe('Private key lifetime, e.g. "30m", "24h", "7d" (default: never expires)'),
         ssh: external_exports.string().optional().describe("SSH destination of the machine running the app, e.g. ubuntu@10.0.0.5 or a Host alias from ~/.ssh/config"),
         sshPort: external_exports.number().int().optional().describe("SSH port (default 22)"),
         identity: external_exports.string().optional().describe("Path to the SSH private key (default: ssh agent / ~/.ssh/config)"),
+        strictHostKey: external_exports.boolean().optional().describe("Require the SSH host key to be in known_hosts already (no first-connection trust)"),
         restart: external_exports.boolean().optional().describe("Restart even if already live (yields a new URL)")
       },
-      handler: ({ port, name, private: priv, ssh, sshPort, identity, restart }) => expose({ port, name, private: priv, restart, ssh: ssh ? { destination: ssh, port: sshPort, identity } : null })
+      handler: ({ port, name, public: pub, expires, ssh, sshPort, identity, strictHostKey, restart }) => expose({ port, name, public: pub, expires, restart, ssh: ssh ? { destination: ssh, port: sshPort, identity, strictHostKey } : null })
     });
   }
 });
 
 // src/mcp/tools/manage.ts
-var listTool, statusTool, stopTool, removeTool, logsTool, doctorTool;
+var listTool, statusTool, stopTool, removeTool, logsTool, rotateTool, doctorTool;
 var init_manage = __esm({
   "src/mcp/tools/manage.ts"() {
     "use strict";
@@ -23065,6 +23110,16 @@ var init_manage = __esm({
       },
       handler: async ({ name, lines }) => readLogs(name, lines ?? 40)
     });
+    rotateTool = defineTool({
+      name: "rotate",
+      description: "Issue a new private key for a live tunnel deploy without restarting it: the previous link and all sessions stop working at once. Optionally set an expiry. On a public deploy this turns it private. Returns the new privateUrl.",
+      annotations: { title: "Rotate private key", readOnlyHint: false, idempotentHint: false },
+      schema: {
+        name: external_exports.string().describe("Deploy name"),
+        expires: external_exports.string().optional().describe('New key lifetime, e.g. "24h" (default: never)')
+      },
+      handler: ({ name, expires }) => rotate(name, { expires })
+    });
     doctorTool = defineTool({
       name: "doctor",
       description: "Diagnostics: cloudflared, Cloudflare sign-in, default backend and active deploys. Run it before deploy when something fails.",
@@ -23083,7 +23138,17 @@ var init_tools = __esm({
     init_deploy();
     init_expose();
     init_manage();
-    tools = [deployTool, exposeTool, listTool, statusTool, stopTool, removeTool, logsTool, doctorTool];
+    tools = [
+      deployTool,
+      exposeTool,
+      listTool,
+      statusTool,
+      rotateTool,
+      stopTool,
+      removeTool,
+      logsTool,
+      doctorTool
+    ];
   }
 });
 
@@ -23152,8 +23217,9 @@ import { parseArgs } from "util";
 var HELP = `cloudfact ${VERSION} \u2014 publish static pages from this machine to Cloudflare
 
 usage:
-  cloudfact deploy [path] [--name n] [--private] [--backend auto|tunnel|workers] [--restart] [--json]
-  cloudfact expose <port> [--name n] [--private] [--ssh user@host] [--ssh-port 22] [--identity key] [--restart] [--json]
+  cloudfact deploy [path] [--name n] [--private] [--expires 24h] [--backend auto|tunnel|workers] [--restart] [--json]
+  cloudfact expose <port> [--name n] [--public] [--expires 24h] [--ssh user@host] [--ssh-port 22] [--identity key] [--strict-host-key] [--restart] [--json]
+  cloudfact rotate <name> [--expires 24h]
   cloudfact list [--json]
   cloudfact status <name> [--json]
   cloudfact stop <name> | --all
@@ -23167,7 +23233,8 @@ usage:
   cloudfact mcp                                  (MCP server over stdio)
 
 path = a folder (served whole, index.html at the root) or a single .html file.
-expose = publish an app already listening on a port, here or on a machine reachable over SSH (HTTP + WebSocket).
+expose = publish an app already listening on a port, here or on a machine reachable over SSH (HTTP + WebSocket). Private by default.
+rotate = new private key for a live deploy (old link and sessions stop working).
 backend auto = workers (fixed *.workers.dev URL) when signed in to Cloudflare, otherwise quick tunnel (trycloudflare.com, no account).`;
 async function main(argv) {
   const { values, positionals } = parseArgs({
@@ -23187,7 +23254,10 @@ async function main(argv) {
       device: { type: "boolean", default: false },
       ssh: { type: "string" },
       "ssh-port": { type: "string" },
-      identity: { type: "string" }
+      identity: { type: "string" },
+      public: { type: "boolean", default: false },
+      expires: { type: "string" },
+      "strict-host-key": { type: "boolean", default: false }
     }
   });
   const [cmd, ...rest] = positionals;
@@ -23208,6 +23278,7 @@ ${HELP}`);
         path: rest[0],
         name: values.name,
         private: values.private,
+        expires: values.expires,
         backend: values.backend,
         restart: values.restart
       });
@@ -23224,9 +23295,15 @@ ${HELP}`);
       const r = await expose({
         port,
         name: values.name,
-        private: values.private,
+        public: values.public,
+        expires: values.expires,
         restart: values.restart,
-        ssh: values.ssh ? { destination: values.ssh, port: values["ssh-port"] ? Number(values["ssh-port"]) : void 0, identity: values.identity } : null
+        ssh: values.ssh ? {
+          destination: values.ssh,
+          port: values["ssh-port"] ? Number(values["ssh-port"]) : void 0,
+          identity: values.identity,
+          strictHostKey: values["strict-host-key"]
+        } : null
       });
       if (values.json) print(r);
       else {
@@ -23250,6 +23327,14 @@ ${HELP}`);
     case "status":
       print(await status(need(rest[0], "the deploy name")));
       return 0;
+    case "rotate": {
+      const r = await rotate(need(rest[0], "the deploy name"), { expires: values.expires });
+      if (values.json) print(r);
+      else console.log(`rotated: ${r.name}
+URL: ${r.privateUrl}${r.keyExpiresAt ? `
+expires: ${r.keyExpiresAt}` : ""}`);
+      return 0;
+    }
     case "stop":
       print(values.all ? await stopAll() : await stop(need(rest[0], "the deploy name (or --all)")));
       return 0;

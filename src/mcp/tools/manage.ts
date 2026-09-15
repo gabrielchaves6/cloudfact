@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { doctor, listDeploys, readLogs, remove, status, stop, stopAll, summarize } from '../../cloudfact.js';
+import { doctor, listDeploys, readLogs, remove, rotate, status, stop, stopAll, summarize } from '../../cloudfact.js';
 import { defineTool } from '../define-tool.js';
 
 export const listTool = defineTool({
@@ -48,6 +48,18 @@ export const logsTool = defineTool({
     lines: z.number().int().min(1).max(500).optional().describe('Number of lines (default 40)'),
   },
   handler: async ({ name, lines }) => readLogs(name, lines ?? 40),
+});
+
+export const rotateTool = defineTool({
+  name: 'rotate',
+  description:
+    'Issue a new private key for a live tunnel deploy without restarting it: the previous link and all sessions stop working at once. Optionally set an expiry. On a public deploy this turns it private. Returns the new privateUrl.',
+  annotations: { title: 'Rotate private key', readOnlyHint: false, idempotentHint: false },
+  schema: {
+    name: z.string().describe('Deploy name'),
+    expires: z.string().optional().describe('New key lifetime, e.g. "24h" (default: never)'),
+  },
+  handler: ({ name, expires }) => rotate(name, { expires }),
 });
 
 export const doctorTool = defineTool({

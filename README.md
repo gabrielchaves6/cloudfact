@@ -36,12 +36,12 @@ It works without any login through the quick tunnel. `cloudflared` is downloaded
 Anything that already listens on a port can be published the same way, with HTTP and WebSocket proxied and the same optional `--private` gate:
 
 ```
-cloudfact expose 3000                          # app running on this machine
+cloudfact expose 3000                          # app running on this machine (private link by default)
 cloudfact expose 3000 --ssh ubuntu@10.0.0.5    # app running on another machine, reached over SSH
-cloudfact expose 8080 --ssh myvm --private     # `myvm` = Host alias from ~/.ssh/config; key-gated URL
+cloudfact expose 8080 --ssh myvm --public      # `myvm` = Host alias from ~/.ssh/config; no key gate
 ```
 
-With `--ssh`, cloudfact opens an `ssh -N -L` port-forward to the remote app and publishes through the local tunnel. Nothing is installed on the remote machine; it only needs key-based SSH access (`--ssh-port`, `--identity` available). The forward and the tunnel are supervised and reconnect if they drop. MCP tool: `expose`.
+Apps are **private by default** (key-gated link, see below); pass `--public` to opt out. With `--ssh`, cloudfact opens an `ssh -N -L` port-forward to the remote app and publishes through the local tunnel. Nothing is installed on the remote machine; it only needs key-based SSH access (`--ssh-port`, `--identity`, `--strict-host-key` available). The forward and the tunnel are supervised and reconnect if they drop. MCP tool: `expose`.
 
 ## Sign in to your Cloudflare account (optional, for a fixed URL)
 
@@ -63,21 +63,32 @@ After signing in the default backend becomes `workers`; `--backend tunnel` remai
 | `tunnel` (default, signed out) | no       | `https://<random>.trycloudflare.com` | local static server + `cloudflared` quick tunnel in a detached process that outlives the agent session and reconnects if the tunnel drops                                                                                                                       |
 | `workers` (default, signed in) | yes      | `https://<name>.<sub>.workers.dev`   | Cloudflare Workers with static assets, the successor of Pages (Cloudflare no longer creates new Pages projects). `wrangler deploy --assets`, fetched via `npx` on first use. Uploads a copy without dotfiles/symlinks/node_modules. `remove` deletes the worker |
 
-`--private` generates a key; the returned URL carries `#key=…`. Without the cookie every route returns only a gate page, which exchanges the fragment for an HttpOnly cookie via `POST /api/session`. Tunnel backend only, for now.
+## Private links
+
+`--private` (the default for `expose`) generates a 256-bit key; the returned URL carries it in `#key=…`, which browsers never send to servers. Without the cookie every route returns only a gate page, which exchanges the fragment for an HttpOnly, Secure cookie via `POST /api/session`. That endpoint is rate-limited per visitor IP (10 attempts/minute) and failures are logged to the deploy's `host.log`.
+
+```
+cloudfact deploy ./report --private --expires 24h   # link stops working after 24h
+cloudfact rotate report                             # new key now; old link and all sessions die
+cloudfact rotate report --expires 2h                # new key with a lifetime
+```
+
+`rotate` works on a running deploy without restarting it (and turns a public deploy private). Tunnel backend only, for now. For identity-based access (sign in with Google or a one-time email code) see the roadmap item on Cloudflare Access.
 
 Local server safety: serves only what is inside the published folder, never dotfiles, no path traversal. A single `.html` is served alone (relative assets are not included; publish the folder in that case).
 
 ## MCP
 
-Stdio server. Tools: `deploy`, `expose`, `list`, `status`, `stop`, `remove`, `logs`, `doctor` — see [docs/tools.md](docs/tools.md) (generated from the code). Prompt: `cloudfact`. Sign-in is deliberately outside the MCP: run `cloudfact login` in a terminal so the token never enters the agent context.
+Stdio server. Tools: `deploy`, `expose`, `list`, `status`, `rotate`, `stop`, `remove`, `logs`, `doctor` — see [docs/tools.md](docs/tools.md) (generated from the code). Prompt: `cloudfact`. Sign-in is deliberately outside the MCP: run `cloudfact login` in a terminal so the token never enters the agent context.
 
 Skill `/cloudfact <path> [--private] [--name x] [--tunnel|--workers]` lives in `skills/cloudfact/SKILL.md`; the Claude Code plugin ships it, and `install.sh` links it into `~/.codex/skills`.
 
 ## CLI
 
 ```
-cloudfact deploy [path] [--name n] [--private] [--backend auto|tunnel|workers] [--restart] [--json]
-cloudfact expose <port> [--name n] [--private] [--ssh user@host] [--ssh-port 22] [--identity key] [--restart] [--json]
+cloudfact deploy [path] [--name n] [--private] [--expires 24h] [--backend auto|tunnel|workers] [--restart] [--json]
+cloudfact expose <port> [--name n] [--public] [--expires 24h] [--ssh user@host] [--ssh-port 22] [--identity key] [--strict-host-key] [--restart] [--json]
+cloudfact rotate <name> [--expires 24h]
 cloudfact list | status <name> | stop <name>|--all | rm <name> | logs <name> [-n 40]
 cloudfact doctor | setup | login --device | login --token T [--account-id ID] | logout
 cloudfact config get | set <key> <value>
@@ -124,6 +135,7 @@ CI fails if `dist/` or `docs/tools.md` are stale, or if the version differs acro
 
 ## Roadmap
 
+- [ ] Cloudflare Access: named tunnel on your own domain + identity-based sign-in (Google, one-time email code) in front of any deploy.
 - [ ] `cloudfact run`: rsync a project to an SSH host, start it there, and expose it in one step.
 - [ ] `--private` on the workers backend (minimal worker checking the cookie).
 - [ ] Named tunnel (fixed URL on your own domain).

@@ -18,6 +18,8 @@ interface DeployState {
     privateUrl?: string | null;
     /** Private-mode key. Never returned raw; use summarize(). */
     key?: string | null;
+    /** ISO date after which the private key stops working (null = never). */
+    keyExpiresAt?: string | null;
     error?: string | null;
     hostPid?: number | null;
     tunnelPid?: number | null;
@@ -42,11 +44,16 @@ interface SshTarget {
     destination: string;
     port?: number;
     identity?: string;
+    /** Require the host key to be in known_hosts already (StrictHostKeyChecking=yes). */
+    strictHostKey?: boolean;
 }
 interface ExposeOptions {
     port: number;
     name?: string;
-    private?: boolean;
+    /** Apps are private by default; set public=true to publish without the key gate. */
+    public?: boolean;
+    /** Key lifetime, e.g. "30m", "24h", "7d". Default: no expiry. */
+    expires?: string;
     ssh?: SshTarget | null;
     restart?: boolean;
     timeoutMs?: number;
@@ -55,6 +62,8 @@ interface DeployOptions {
     path?: string;
     name?: string;
     private?: boolean;
+    /** Key lifetime for private deploys, e.g. "30m", "24h", "7d". Default: no expiry. */
+    expires?: string;
     backend?: BackendChoice;
     restart?: boolean;
     timeoutMs?: number;
@@ -107,8 +116,15 @@ declare function installCloudflared(onProgress?: (msg: string) => void): Promise
 
 declare function resolveBackend(choice: DeployOptions['backend']): Backend;
 declare function deploy(opts?: DeployOptions): Promise<DeployResult>;
-/** Publish an app that already listens on a port, here or on a machine reachable over SSH. Tunnel backend only. */
+/** Publish an app that already listens on a port, here or on a machine reachable over SSH. Tunnel backend only. Private by default. */
 declare function expose(opts: ExposeOptions): Promise<DeployResult>;
+/**
+ * Issues a new private key (and optional expiry) for a live tunnel deploy without restarting it: the old
+ * link and every session cookie stop working immediately. On a public deploy this turns it private.
+ */
+declare function rotate(name: string, opts?: {
+    expires?: string;
+}): Promise<DeployResult>;
 declare function stop(name: string): Promise<{
     name: string;
     stopped: boolean;
@@ -182,4 +198,4 @@ interface ToolDefinition<Schema extends ZodRawShape = ZodRawShape> {
 
 declare const tools: ToolDefinition<any>[];
 
-export { type Backend, type BackendChoice, type Credentials, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type ExposeOptions, type SshTarget, type StatusResult, type ToolDefinition, VERSION, createServer, deploy, doctor, expose, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, readLogs, remove, resolveBackend, status, stop, stopAll, summarize, tools };
+export { type Backend, type BackendChoice, type Credentials, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type ExposeOptions, type SshTarget, type StatusResult, type ToolDefinition, VERSION, createServer, deploy, doctor, expose, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, readLogs, remove, resolveBackend, rotate, status, stop, stopAll, summarize, tools };

@@ -14,11 +14,12 @@ _mutating, idempotent_
 | `name` | string | no | Deploy name (slug). Defaults to the folder/file name |
 | `private` | boolean | no | Key-protected: only whoever opens privateUrl (#key=...) sees the content. Forces the tunnel backend |
 | `backend` | `auto` \| `tunnel` \| `workers` | no | auto = workers when signed in to Cloudflare, otherwise tunnel |
+| `expires` | string | no | Private key lifetime, e.g. "30m", "24h", "7d" (default: never expires) |
 | `restart` | boolean | no | Restart even if already live (yields a new URL on tunnel) |
 
 ## `expose` — Expose a running app
 
-Publish an app that is already listening on a port to a public *.trycloudflare.com URL (tunnel backend). Without ssh, the port is on this machine. With ssh (user@host), the app runs on another machine: cloudfact opens an SSH port-forward to it and publishes through here — nothing to install remotely (key-based SSH access required). HTTP and WebSocket traffic is proxied. private=true adds the same #key gate as static deploys. Idempotent: the same port/host already live returns the existing URL (reused=true).
+Publish an app that is already listening on a port to a public *.trycloudflare.com URL (tunnel backend). Without ssh, the port is on this machine. With ssh (user@host), the app runs on another machine: cloudfact opens an SSH port-forward to it and publishes through here — nothing to install remotely (key-based SSH access required). HTTP and WebSocket traffic is proxied. Apps are PRIVATE by default (same #key gate as static deploys, with rate limiting and optional expiry); pass public=true to publish without the gate. Idempotent: the same port/host already live returns the existing URL (reused=true).
 
 _mutating, idempotent_
 
@@ -26,10 +27,12 @@ _mutating, idempotent_
 | --- | --- | --- | --- |
 | `port` | number | yes | Port the app listens on (locally, or on the SSH host) |
 | `name` | string | no | Deploy name (slug). Defaults to port-<port> or <host>-<port> |
-| `private` | boolean | no | Key-protected: only whoever opens privateUrl (#key=...) reaches the app |
+| `public` | boolean | no | Publish without the key gate (default false: private) |
+| `expires` | string | no | Private key lifetime, e.g. "30m", "24h", "7d" (default: never expires) |
 | `ssh` | string | no | SSH destination of the machine running the app, e.g. ubuntu@10.0.0.5 or a Host alias from ~/.ssh/config |
 | `sshPort` | number | no | SSH port (default 22) |
 | `identity` | string | no | Path to the SSH private key (default: ssh agent / ~/.ssh/config) |
+| `strictHostKey` | boolean | no | Require the SSH host key to be in known_hosts already (no first-connection trust) |
 | `restart` | boolean | no | Restart even if already live (yields a new URL) |
 
 ## `list` — List deploys
@@ -49,6 +52,17 @@ _read-only_
 | parameter | type | required | description |
 | --- | --- | --- | --- |
 | `name` | string | yes | Deploy name |
+
+## `rotate` — Rotate private key
+
+Issue a new private key for a live tunnel deploy without restarting it: the previous link and all sessions stop working at once. Optionally set an expiry. On a public deploy this turns it private. Returns the new privateUrl.
+
+_mutating_
+
+| parameter | type | required | description |
+| --- | --- | --- | --- |
+| `name` | string | yes | Deploy name |
+| `expires` | string | no | New key lifetime, e.g. "24h" (default: never) |
 
 ## `stop` — Stop deploy
 

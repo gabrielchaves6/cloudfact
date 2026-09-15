@@ -16,7 +16,7 @@ If the argument starts with `expose`, or the user wants to publish something tha
 
 - App running on this machine: `expose` tool with `port` (start the app first if needed, in the background, and confirm it answers on 127.0.0.1:<port>).
 - App running on another machine: `expose` with `port` and `ssh: "user@host"` (plus `sshPort`/`identity` when given). The machine only needs key-based SSH access from here; nothing is installed there. If SSH fails, run `ssh -o BatchMode=yes user@host true` in the shell to show the real error.
-- `private: true` when the app is not meant for the public. Then reply with the URL exactly as in step 3 below.
+- Apps are private by default; pass `public: true` only when the user explicitly wants it open. Use `expires` (e.g. `"24h"`) for temporary links. Then reply with the URL exactly as in step 3 below.
 
 ## Static pages
 
@@ -40,4 +40,5 @@ If the argument starts with `expose`, or the user wants to publish something tha
 
 - Never copy the private key into the user's project files; it already lives in `~/.cloudfact/deploys/<name>/state.json` (0600).
 - Do not republish in a loop: `deploy` is idempotent and returns the existing URL when the same path is already live (`reused: true`).
+- To revoke a shared link without taking the site down, use the `rotate` tool and hand over the new `privateUrl`.
 - Never serve `/` or `$HOME` as a whole; if asked, point at a specific subfolder.

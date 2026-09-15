@@ -110,56 +110,117 @@ function patchState(name2, patch) {
   return next;
 }
 
-// src/backends/tunnel/proxy.ts
-import http from "http";
-import net from "net";
-
 // src/backends/tunnel/gate.ts
 import crypto from "crypto";
 var COOKIE_NAME = "cloudfact_access";
+var RATE_LIMIT = { attempts: 10, windowMs: 6e4 };
 var GATE_HTML = `<!doctype html><html lang="en"><meta charset="utf-8"><title>cloudfact</title>
 <style>body{font:16px system-ui;margin:3rem;color:#333}</style><body><p id="m">Signing in\u2026</p>
 <script>(async()=>{const el=document.getElementById('m');const m=location.hash.match(/key=([^&]+)/);
 if(!m){el.textContent='Private page: open it through the full link (with #key=\u2026).';return}
 const r=await fetch('/api/session',{method:'POST',headers:{Authorization:'Bearer '+decodeURIComponent(m[1])}});
-if(r.ok){history.replaceState(null,'',location.pathname+location.search);location.reload()}
-else el.textContent='Invalid key.'})()</script></body></html>`;
+if(r.ok){history.replaceState(null,'',location.pathname+location.search);location.reload();return}
+let msg='Invalid key.';try{const j=await r.json();if(j.error==='expired')msg='This link has expired. Ask for a new one.';if(r.status===429)msg='Too many attempts. Try again in a minute.'}catch{}
+el.textContent=msg})()</script></body></html>`;
 function timingEqual(a, b) {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
-function hasAccessCookie(req, key, cookieName = COOKIE_NAME) {
+function clientIp(req) {
+  const cf = req.headers["cf-connecting-ip"];
+  if (typeof cf === "string" && cf) return cf;
+  return req.socket.remoteAddress ?? "unknown";
+}
+function cookieValue(req, cookieName) {
   for (const part of (req.headers.cookie ?? "").split(";")) {
     const [k, ...v] = part.trim().split("=");
-    if (k === cookieName) return timingEqual(v.join("="), key);
+    if (k === cookieName) return v.join("=");
   }
-  return false;
+  return null;
 }
 function reply(res, code, body, headers) {
   const buf = Buffer.from(body);
   res.writeHead(code, { "Content-Length": buf.length, "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow", ...headers });
   res.end(buf);
 }
-function gateRequest(req, res, key, cookieName = COOKIE_NAME) {
-  if (!key) return false;
-  const url = new URL(req.url ?? "/", "http://localhost");
-  if (url.pathname === "/api/session" && req.method === "POST") {
-    const auth = req.headers.authorization ?? "";
-    const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-    if (timingEqual(token, key)) {
-      reply(res, 204, "", { "Set-Cookie": `${cookieName}=${key}; Path=/; HttpOnly; Secure; SameSite=Lax` });
-    } else {
-      reply(res, 401, '{"error":"invalid key"}', { "Content-Type": "application/json" });
+function createGate(opts) {
+  const cookieName = opts.cookieName ?? COOKIE_NAME;
+  const log2 = opts.log ?? (() => {
+  });
+  const now = opts.now ?? Date.now;
+  const failures = /* @__PURE__ */ new Map();
+  const current = () => {
+    const info = opts.getKey();
+    const expired = Boolean(info.expiresAt && Date.parse(info.expiresAt) <= now());
+    return { key: info.key, expired };
+  };
+  const limited = (ip) => {
+    const entry = failures.get(ip);
+    if (!entry) return false;
+    if (now() - entry.windowStart > RATE_LIMIT.windowMs) {
+      failures.delete(ip);
+      return false;
     }
+    return entry.count >= RATE_LIMIT.attempts;
+  };
+  const recordFailure = (ip) => {
+    const entry = failures.get(ip);
+    if (!entry || now() - entry.windowStart > RATE_LIMIT.windowMs) failures.set(ip, { count: 1, windowStart: now() });
+    else entry.count += 1;
+    if (failures.size > 1e4) failures.clear();
+  };
+  const authorized = (req) => {
+    const { key, expired } = current();
+    if (!key) return true;
+    if (expired) return false;
+    const value = cookieValue(req, cookieName);
+    return value !== null && timingEqual(value, key);
+  };
+  const handle = (req, res) => {
+    const { key, expired } = current();
+    if (!key) return false;
+    const url = new URL(req.url ?? "/", "http://localhost");
+    if (url.pathname === "/api/session" && req.method === "POST") {
+      const ip = clientIp(req);
+      if (limited(ip)) {
+        log2(`gate: rate limit hit from ${ip}`);
+        reply(res, 429, '{"error":"rate_limited"}', {
+          "Content-Type": "application/json",
+          "Retry-After": String(RATE_LIMIT.windowMs / 1e3)
+        });
+        return true;
+      }
+      const auth = req.headers.authorization ?? "";
+      const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+      if (expired) {
+        recordFailure(ip);
+        log2(`gate: expired key presented from ${ip}`);
+        reply(res, 401, '{"error":"expired"}', { "Content-Type": "application/json" });
+      } else if (timingEqual(token, key)) {
+        failures.delete(ip);
+        log2(`gate: session opened for ${ip}`);
+        reply(res, 204, "", { "Set-Cookie": `${cookieName}=${key}; Path=/; HttpOnly; Secure; SameSite=Lax` });
+      } else {
+        recordFailure(ip);
+        log2(`gate: invalid key from ${ip}`);
+        reply(res, 401, '{"error":"invalid"}', { "Content-Type": "application/json" });
+      }
+      return true;
+    }
+    if (authorized(req)) return false;
+    reply(res, 200, GATE_HTML, { "Content-Type": "text/html; charset=utf-8" });
     return true;
-  }
-  if (hasAccessCookie(req, key, cookieName)) return false;
-  reply(res, 200, GATE_HTML, { "Content-Type": "text/html; charset=utf-8" });
-  return true;
+  };
+  return { handle, authorized, enabled: () => Boolean(current().key) };
+}
+function staticGate(key, cookieName) {
+  return createGate({ getKey: () => ({ key: key ?? null }), cookieName });
 }
 
 // src/backends/tunnel/proxy.ts
+import http from "http";
+import net from "net";
 var HOP_BY_HOP = /* @__PURE__ */ new Set([
   "connection",
   "keep-alive",
@@ -173,13 +234,17 @@ var HOP_BY_HOP = /* @__PURE__ */ new Set([
 function createProxy(opts) {
   const host = opts.targetHost ?? "127.0.0.1";
   const port = opts.targetPort;
+  const gate2 = opts.gate ?? staticGate(opts.key);
   const handler = (req, res) => {
-    if (gateRequest(req, res, opts.key)) return;
+    if (gate2.handle(req, res)) return;
     const headers = {};
-    for (const [k, v] of Object.entries(req.headers)) if (!HOP_BY_HOP.has(k)) headers[k] = v;
+    for (const [k, v] of Object.entries(req.headers))
+      if (!HOP_BY_HOP.has(k) && !k.startsWith("x-forwarded-") && k !== "x-real-ip") headers[k] = v;
+    const ip = clientIp(req);
     headers["x-forwarded-proto"] = "https";
     headers["x-forwarded-host"] = req.headers.host;
-    headers["x-forwarded-for"] = req.socket.remoteAddress ?? "";
+    headers["x-forwarded-for"] = ip;
+    headers["x-real-ip"] = ip;
     const upstream = http.request({ host, port, method: req.method, path: req.url, headers }, (up) => {
       res.writeHead(up.statusCode ?? 502, up.headers);
       up.pipe(res);
@@ -191,7 +256,7 @@ function createProxy(opts) {
     req.pipe(upstream);
   };
   const upgrade = (req, socket, head) => {
-    if (opts.key && !hasAccessCookie(req, opts.key)) {
+    if (!gate2.authorized(req)) {
       socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
       return;
     }
@@ -288,11 +353,11 @@ function safeResolve(root, urlPath) {
 function createStaticHandler(opts) {
   const root = opts.root ? path4.resolve(opts.root) : null;
   const file = opts.file ? path4.resolve(opts.file) : null;
-  const cookieName = opts.cookieName ?? COOKIE_NAME;
+  const gate2 = opts.gate ?? staticGate(opts.key, opts.cookieName);
   return (req, res) => {
     const method = req.method ?? "GET";
     const url = new URL(req.url ?? "/", "http://localhost");
-    if (gateRequest(req, res, opts.key, cookieName)) return;
+    if (gate2.handle(req, res)) return;
     if (method !== "GET" && method !== "HEAD") return send(res, 405, "method not allowed");
     let abs;
     if (opts.mode === "file") {
@@ -355,6 +420,17 @@ var tunnel = null;
 var ssh = null;
 var restarts = 0;
 var sshRestarts = 0;
+var keyCache = { at: 0, key: null, expiresAt: null };
+var gate = createGate({
+  getKey: () => {
+    if (Date.now() - keyCache.at > 1e3) {
+      const s = readState(name);
+      keyCache = { at: Date.now(), key: s?.key ?? null, expiresAt: s?.keyExpiresAt ?? null };
+    }
+    return keyCache;
+  },
+  log: (m) => log.ts(m)
+});
 async function main() {
   let server;
   if (initial.mode === "proxy") {
@@ -364,11 +440,11 @@ async function main() {
       patchState(name, { forwardPort: targetPort });
       startSshForward(targetPort);
     }
-    const proxy = createProxy({ targetPort, key: initial.key });
+    const proxy = createProxy({ targetPort, gate });
     server = http2.createServer(proxy.handler);
     server.on("upgrade", proxy.upgrade);
   } else {
-    server = http2.createServer(createStaticHandler({ mode: initial.mode, root: initial.root, file: initial.file, key: initial.key }));
+    server = http2.createServer(createStaticHandler({ mode: initial.mode, root: initial.root, file: initial.file, gate }));
   }
   server.keepAliveTimeout = 65e3;
   server.listen(0, "127.0.0.1", () => {
@@ -394,7 +470,7 @@ function freePort() {
 }
 function startSshForward(localPort) {
   if (stopping || !initial.ssh) return;
-  const { destination, port, identity } = initial.ssh;
+  const { destination, port, identity, strictHostKey } = initial.ssh;
   const args = [
     "-N",
     "-o",
@@ -406,7 +482,7 @@ function startSshForward(localPort) {
     "-o",
     "BatchMode=yes",
     "-o",
-    "StrictHostKeyChecking=accept-new",
+    `StrictHostKeyChecking=${strictHostKey ? "yes" : "accept-new"}`,
     "-L",
     `127.0.0.1:${localPort}:127.0.0.1:${initial.targetPort}`
   ];

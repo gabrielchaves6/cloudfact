@@ -2,10 +2,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { HOME, VERSION, readConfig } from './config.js';
-import { deployTunnel, stopTunnel } from './backends/tunnel/index.js';
+import { deployTunnel, newKey, stopTunnel } from './backends/tunnel/index.js';
+import { expiryFrom } from './services/duration.js';
 import { deleteWorker, deployWorkers } from './backends/workers/index.js';
 import { cloudflaredVersion, findCloudflared } from './services/cloudflared.js';
-import { effectiveState, listDeploys, readState, removeDeployDir, slug, summarize } from './services/state.js';
+import { effectiveState, isLive, listDeploys, readState, removeDeployDir, slug, summarize, writeState } from './services/state.js';
 import { credentials } from './services/wrangler.js';
 import { spawnSync } from 'node:child_process';
 
@@ -51,13 +52,21 @@ export async function deploy(opts: DeployOptions = {}): Promise<DeployResult> {
   const backend = opts.private ? 'tunnel' : resolveBackend(opts.backend);
   const common = { name, mode: t.mode, root: t.root, file: t.file, private: Boolean(opts.private) };
   if (backend === 'workers') return deployWorkers(common);
-  return deployTunnel({ ...common, restart: Boolean(opts.restart), timeoutMs: opts.timeoutMs ?? 45_000 });
+  return deployTunnel({
+    ...common,
+    keyExpiresAt: opts.private ? expiryFrom(opts.expires) : null,
+    restart: Boolean(opts.restart),
+    timeoutMs: opts.timeoutMs ?? 45_000,
+  });
 }
 
-/** Publish an app that already listens on a port, here or on a machine reachable over SSH. Tunnel backend only. */
+/** Publish an app that already listens on a port, here or on a machine reachable over SSH. Tunnel backend only. Private by default. */
 export async function expose(opts: ExposeOptions): Promise<DeployResult> {
   if (!Number.isInteger(opts.port) || opts.port < 1 || opts.port > 65535) throw new Error(`invalid port: ${String(opts.port)}`);
-  const ssh = opts.ssh?.destination ? { destination: opts.ssh.destination, port: opts.ssh.port, identity: opts.ssh.identity } : null;
+  const ssh = opts.ssh?.destination
+    ? { destination: opts.ssh.destination, port: opts.ssh.port, identity: opts.ssh.identity, strictHostKey: opts.ssh.strictHostKey }
+    : null;
+  const priv = !opts.public;
   const name = slug(opts.name ?? (ssh ? `${ssh.destination.split('@').pop()}-${opts.port}` : `port-${opts.port}`));
   return deployTunnel({
     name,
@@ -66,10 +75,26 @@ export async function expose(opts: ExposeOptions): Promise<DeployResult> {
     file: null,
     targetPort: opts.port,
     ssh,
-    private: Boolean(opts.private),
+    private: priv,
+    keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
     restart: Boolean(opts.restart),
     timeoutMs: opts.timeoutMs ?? 45_000,
   });
+}
+
+/**
+ * Issues a new private key (and optional expiry) for a live tunnel deploy without restarting it: the old
+ * link and every session cookie stop working immediately. On a public deploy this turns it private.
+ */
+export async function rotate(name: string, opts: { expires?: string } = {}): Promise<DeployResult> {
+  const s = effectiveState(name);
+  if (!s) throw new Error(`deploy "${name}" does not exist`);
+  if (s.backend !== 'tunnel') throw new Error('rotate applies to tunnel deploys only');
+  if (!isLive(s) || !s.url) throw new Error(`deploy "${name}" is not running`);
+  const key = newKey();
+  const next = { ...s, key, keyExpiresAt: expiryFrom(opts.expires), privateUrl: `${s.url}/#key=${key}` };
+  writeState(name, next);
+  return { ...summarize(next), reused: false };
 }
 
 export async function stop(name: string): Promise<{ name: string; stopped: boolean; note?: string }> {

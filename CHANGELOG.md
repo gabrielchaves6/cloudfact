@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-15
+
+### Security
+
+- `expose` is private by default (`--public` to opt out).
+- Private key expiry (`--expires 30m|24h|7d`) and runtime rotation (`cloudfact rotate <name>` / MCP tool `rotate`) without restarting the deploy.
+- `POST /api/session` rate-limited per visitor IP (10/min) with failures logged; expired links get a distinct message.
+- Reverse proxy sets `X-Forwarded-For`/`X-Real-IP` from `CF-Connecting-IP` and drops client-supplied forwarding headers.
+- `expose --ssh --strict-host-key` requires the host key to be known already.
+
 ## [0.4.0] - 2026-09-15
 
 ### Added

@@ -16,6 +16,8 @@ export interface DeployState {
   privateUrl?: string | null;
   /** Private-mode key. Never returned raw; use summarize(). */
   key?: string | null;
+  /** ISO date after which the private key stops working (null = never). */
+  keyExpiresAt?: string | null;
   error?: string | null;
   // tunnel
   hostPid?: number | null;
@@ -45,12 +47,17 @@ export interface SshTarget {
   destination: string;
   port?: number;
   identity?: string;
+  /** Require the host key to be in known_hosts already (StrictHostKeyChecking=yes). */
+  strictHostKey?: boolean;
 }
 
 export interface ExposeOptions {
   port: number;
   name?: string;
-  private?: boolean;
+  /** Apps are private by default; set public=true to publish without the key gate. */
+  public?: boolean;
+  /** Key lifetime, e.g. "30m", "24h", "7d". Default: no expiry. */
+  expires?: string;
   ssh?: SshTarget | null;
   restart?: boolean;
   timeoutMs?: number;
@@ -60,6 +67,8 @@ export interface DeployOptions {
   path?: string;
   name?: string;
   private?: boolean;
+  /** Key lifetime for private deploys, e.g. "30m", "24h", "7d". Default: no expiry. */
+  expires?: string;
   backend?: BackendChoice;
   restart?: boolean;
   timeoutMs?: number;

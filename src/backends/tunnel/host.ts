@@ -11,6 +11,7 @@ import { readConfig } from '../../config.js';
 import { log } from '../../logger.js';
 import { findCloudflared } from '../../services/cloudflared.js';
 import { deployDir, patchState, readState } from '../../services/state.js';
+import { createGate } from './gate.js';
 import { createProxy } from './proxy.js';
 import { createStaticHandler } from './static-server.js';
 
@@ -34,6 +35,19 @@ let ssh: ChildProcess | null = null;
 let restarts = 0;
 let sshRestarts = 0;
 
+/** Key info re-read from state.json (cached for 1s) so `rotate` and expiry apply without a restart. */
+let keyCache: { at: number; key: string | null; expiresAt: string | null } = { at: 0, key: null, expiresAt: null };
+const gate = createGate({
+  getKey: () => {
+    if (Date.now() - keyCache.at > 1000) {
+      const s = readState(name);
+      keyCache = { at: Date.now(), key: s?.key ?? null, expiresAt: s?.keyExpiresAt ?? null };
+    }
+    return keyCache;
+  },
+  log: (m) => log.ts(m),
+});
+
 async function main(): Promise<void> {
   let server: http.Server;
   if (initial.mode === 'proxy') {
@@ -43,11 +57,11 @@ async function main(): Promise<void> {
       patchState(name, { forwardPort: targetPort });
       startSshForward(targetPort);
     }
-    const proxy = createProxy({ targetPort, key: initial.key });
+    const proxy = createProxy({ targetPort, gate });
     server = http.createServer(proxy.handler);
     server.on('upgrade', proxy.upgrade);
   } else {
-    server = http.createServer(createStaticHandler({ mode: initial.mode, root: initial.root, file: initial.file, key: initial.key }));
+    server = http.createServer(createStaticHandler({ mode: initial.mode, root: initial.root, file: initial.file, gate }));
   }
   server.keepAliveTimeout = 65_000;
   server.listen(0, '127.0.0.1', () => {
@@ -76,7 +90,7 @@ function freePort(): Promise<number> {
 /** `ssh -N -L` to the remote app; restarted with backoff if the connection drops. */
 function startSshForward(localPort: number): void {
   if (stopping || !initial.ssh) return;
-  const { destination, port, identity } = initial.ssh;
+  const { destination, port, identity, strictHostKey } = initial.ssh;
   const args = [
     '-N',
     '-o',
@@ -88,7 +102,7 @@ function startSshForward(localPort: number): void {
     '-o',
     'BatchMode=yes',
     '-o',
-    'StrictHostKeyChecking=accept-new',
+    `StrictHostKeyChecking=${strictHostKey ? 'yes' : 'accept-new'}`,
     '-L',
     `127.0.0.1:${localPort}:127.0.0.1:${initial.targetPort}`,
   ];
