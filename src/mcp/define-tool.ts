@@ -1,5 +1,5 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import type { ZodRawShape, objectOutputType, ZodTypeAny } from 'zod';
+import type { z, ZodRawShape } from 'zod';
 
 export interface ToolAnnotations {
   title: string;
@@ -13,7 +13,7 @@ export interface ToolDefinition<Schema extends ZodRawShape = ZodRawShape> {
   description: string;
   annotations: ToolAnnotations;
   schema: Schema;
-  handler: (params: objectOutputType<Schema, ZodTypeAny>) => Promise<unknown>;
+  handler: (params: z.infer<z.ZodObject<Schema>>) => Promise<unknown>;
 }
 
 /** Identidade tipada: garante que `handler` recebe os params do `schema`. */

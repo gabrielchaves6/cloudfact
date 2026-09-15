@@ -5,6 +5,12 @@ updates:
     schedule: { interval: weekly }
     groups:
       dev: { dependency-type: development }
+    ignore:
+      # majors com quebra: migrar de propósito, não por bot
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
+      - dependency-name: zod
+        update-types: ['version-update:semver-major']
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
