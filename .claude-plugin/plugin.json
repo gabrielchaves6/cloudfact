@@ -1,6 +1,6 @@
 {
   "name": "cloudfact",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Publish an HTML file or a folder from this machine to a public Cloudflare URL with /cloudfact (quick tunnel without an account, or Workers with a fixed URL).",
   "author": {
     "name": "Gabriel Chaves",
