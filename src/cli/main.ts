@@ -12,6 +12,9 @@ usage:
                                                  (every cloudfact in the Cloudflare account, grouped by project;
                                                   --publish turns the catalog itself into a page)
   cloudfact project <name> <project|->            (file a deploy under a project; "-" clears it)
+  cloudfact creds <name> [--user u] [--password p] [--note n] [--clear]
+                                                 (the app's own login, shown on the catalog page, which is
+                                                  behind sign-in; stored on this machine only)
   cloudfact status <name> [--json]
   cloudfact stop <name> | --all
   cloudfact rm <name>
@@ -53,6 +56,10 @@ export async function main(argv: string[]): Promise<number> {
       access: { type: 'string' },
       project: { type: 'string' },
       publish: { type: 'boolean' },
+      user: { type: 'string' },
+      password: { type: 'string' },
+      note: { type: 'string' },
+      clear: { type: 'boolean' },
     },
   });
   const [cmd, ...rest] = positionals;
@@ -156,6 +163,13 @@ export async function main(argv: string[]): Promise<number> {
       const entry = await cf.setProject(name, project === '-' ? null : project);
       if (values.json) print(entry);
       else console.log(`${entry.name} → ${entry.project ?? '(no project)'}`);
+      return 0;
+    }
+    case 'creds': {
+      const name = need(rest[0], 'the deploy name');
+      const r = cf.setCredentials(name, values.clear ? null : { user: values.user, password: values.password, note: values.note });
+      if (values.json) print(r);
+      else console.log(r.creds ? `${name}: login saved (shown only on the catalog page, behind sign-in)` : `${name}: login cleared`);
       return 0;
     }
     case 'list':

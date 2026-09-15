@@ -116,8 +116,15 @@ published by an older cloudfact, from another folder, or by another tool), next 
 know (`local tunnel`). `--publish` deploys the
 catalog as a page with a card per deploy, search, a list view and a filter per project. Each card shows a
 real thumbnail, captured when the catalog is published from whatever this machine can already read: the
-published folder, the app's own port, or the URL with its private key. Thumbnails render with scripts off
-in a sandboxed frame, and a deploy this machine cannot see falls back to a monogram. The page is an index of everything you host, so it asks for
+published folder, the app's own port, or the URL with its private key. Thumbnails render with scripts off in a sandboxed frame, and a deploy this
+machine cannot see falls back to a monogram. The page never points a frame at a live site: doing so lets
+that site challenge the visitor for credentials.
+
+Because the page is behind sign-in, it can also be the one place that opens everything: each card links
+to the deploy with its private key already in the link, so a page you are allowed to see opens in one
+click. `cloudfact creds <name> --user u --password p --note n` records the login of the app itself (a
+terminal, a dashboard) next to the deploy; it stays on this machine and is shown, behind a click, only on
+a catalog page that is itself gated. A catalog published with `--public` carries neither keys nor logins. The page is an index of everything you host, so it asks for
 Cloudflare Access sign-in by default, for the email that owns the account; pass `--access` to choose who
 else gets in, or `--public` to opt out. MCP tools: `catalog`, `project`.
 

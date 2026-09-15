@@ -67,6 +67,20 @@ _mutating, idempotent_
 | `name` | string | yes | Deploy name |
 | `project` | string | yes | Project name, or null to clear |
 
+## `credentials` — Set app login
+
+Record how to get into the app behind a deploy (its own username/password/note, not cloudfact's). Stored with the deploy on this machine and shown only on a catalog page that is itself behind Cloudflare Access sign-in. Pass creds=null to clear. Never put the user's secrets in your reply.
+
+_mutating, idempotent_
+
+| parameter | type | required | description |
+| --- | --- | --- | --- |
+| `name` | string | yes | Deploy name |
+| `user` | string | no | The app's username |
+| `password` | string | no | The app's password |
+| `note` | string | no | Anything else needed to get in |
+| `clear` | boolean | no | Forget the stored login |
+
 ## `status` — Deploy status
 
 State of one deploy, including an HTTP check of its public URL (reachable/httpStatus).

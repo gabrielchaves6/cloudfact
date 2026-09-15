@@ -28,6 +28,7 @@ If the argument starts with `expose`, or the user wants to publish something tha
    - `path`: absolute path.
    - Deploys are private by default (key-gated link). Pass `public: true` only when the user explicitly asks for an open page. `expires` (e.g. `"24h"`) for temporary links.
    - When the user has several deploys and asks what is online, answer from `catalog` and, if no catalog page exists yet, offer once to publish it with `catalog` + `publish: true` (one page with every site, behind a sign-in). Do not insist.
+   - `credentials` stores the login of the app behind a deploy so the catalog page can show it. Never repeat a stored password back to the user in chat; point at the catalog page instead.
    - To answer "what do I have published?", use `catalog` (the Cloudflare account, not just this machine): it groups by project and says, per deploy, whether it is public, a private link or behind sign-in, and whether it is static or an app with its own server. `catalog` with `publish: true` turns it into a page, which asks for Access sign-in by default. Use `project` to file a deploy under a project without redeploying, and pass `project` on `deploy`/`expose` when the user names one.
    - When the user wants sign-in by identity ("only me", "only these people", "login"), use `access: [emails]` with `backend: "workers"`. It needs an API-token login; if `doctor` shows `source: "wrangler"`, explain the token steps from the error message instead of asking for the token in chat.
    - `name`: from `--name`, otherwise keep the default.

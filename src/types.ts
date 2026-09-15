@@ -43,6 +43,9 @@ export interface DeployState {
   files?: number;
   /** Project this deploy belongs to in the account catalog. */
   project?: string | null;
+  /** How to get into the app behind the link (its own login, not cloudfact's). Never leaves this machine
+   *  except into a catalog page that is itself behind sign-in. */
+  creds?: { user?: string | null; password?: string | null; note?: string | null } | null;
   /** Cloudflare Access app in front of this deploy (identity sign-in). */
   access?: { appId: string; aud: string; domain: string; emails: string[]; teamDomain: string } | null;
   versionId?: string | null;
@@ -114,6 +117,10 @@ export interface CatalogEntry {
   modifiedAt: string | null;
   backend: Backend;
   status: DeployStatus;
+  /** Link that opens the page already unlocked (carries the private key). Only for a gated catalog. */
+  openUrl?: string | null;
+  /** The app's own login, shown on a catalog page that is behind sign-in. */
+  creds?: { user?: string | null; password?: string | null; note?: string | null } | null;
   /**
    * Live on this machine but with no local record: published by an older cloudfact whose state is gone,
    * from another folder or home, or by another tool entirely. The page works; cloudfact cannot manage it.

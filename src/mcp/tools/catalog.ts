@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { catalog, publishCatalog, setProject } from '../../cloudfact.js';
+import { catalog, publishCatalog, setCredentials, setProject } from '../../cloudfact.js';
 import { defineTool } from '../define-tool.js';
 
 export const catalogTool = defineTool({
@@ -27,4 +27,19 @@ export const projectTool = defineTool({
     project: z.string().nullable().describe('Project name, or null to clear'),
   },
   handler: ({ name, project }) => setProject(name, project),
+});
+
+export const credentialsTool = defineTool({
+  name: 'credentials',
+  description:
+    "Record how to get into the app behind a deploy (its own username/password/note, not cloudfact's). Stored with the deploy on this machine and shown only on a catalog page that is itself behind Cloudflare Access sign-in. Pass creds=null to clear. Never put the user's secrets in your reply.",
+  annotations: { title: 'Set app login', readOnlyHint: false, idempotentHint: true },
+  schema: {
+    name: z.string().describe('Deploy name'),
+    user: z.string().nullable().optional().describe("The app's username"),
+    password: z.string().nullable().optional().describe("The app's password"),
+    note: z.string().nullable().optional().describe('Anything else needed to get in'),
+    clear: z.boolean().optional().describe('Forget the stored login'),
+  },
+  handler: async ({ name, user, password, note, clear }) => setCredentials(name, clear ? null : { user, password, note }),
 });

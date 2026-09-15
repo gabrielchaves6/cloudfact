@@ -15,7 +15,16 @@ import { credentials } from './services/wrangler.js';
 import { spawn, spawnSync } from 'node:child_process';
 
 const hasSsh = (): boolean => spawnSync('sh', ['-c', 'command -v ssh'], { encoding: 'utf8' }).status === 0;
-import type { Backend, DeployMode, DeployOptions, DeployResult, DeploySummary, ExposeOptions } from './types.js';
+import type {
+  Backend,
+  CatalogResult,
+  DeployMode,
+  DeployOptions,
+  DeployResult,
+  DeployState,
+  DeploySummary,
+  ExposeOptions,
+} from './types.js';
 
 export { listDeploys, readLogs, summarize } from './services/state.js';
 export { catalog, setProject } from './services/catalog.js';
@@ -108,6 +117,36 @@ export async function expose(opts: ExposeOptions): Promise<DeployResult> {
 }
 
 /**
+ * Fills in what only this machine knows: the link that already carries the private key, and the app's own
+ * login. A page open to anyone must never carry either; a page behind sign-in may, and that is the point
+ * of it — one place that opens everything you host without asking for a second secret.
+ */
+export function withLocalSecrets(c: CatalogResult, states: Map<string, DeployState>, gated: boolean): CatalogResult {
+  for (const group of c.projects)
+    for (const d of group.deploys) {
+      const st = gated ? states.get(d.name) : undefined;
+      d.openUrl = st ? (st.privateUrl ?? d.url) : null;
+      d.creds = st?.creds ?? null;
+    }
+  return c;
+}
+
+/**
+ * Records how to get into the app behind a deploy (its own login, not cloudfact's). Stored with the
+ * deploy on this machine and surfaced only on a catalog page that is itself behind sign-in.
+ */
+export function setCredentials(
+  name: string,
+  creds: { user?: string | null; password?: string | null; note?: string | null } | null,
+): DeploySummary {
+  const s = readState(name);
+  if (!s) throw new Error(`deploy "${name}" does not exist`);
+  const next = { ...s, creds: creds && (creds.user || creds.password || creds.note) ? creds : null };
+  writeState(name, next);
+  return summarize(next);
+}
+
+/**
  * One-off nudge: once someone has a handful of deploys and no catalog page yet, it is worth telling them
  * the page exists. Returns the line to print exactly once, then never again.
  */
@@ -160,6 +199,7 @@ export async function publishCatalog(
   const c = await readCatalog();
   const access = opts.access ?? (opts.public ? undefined : ((await accountEmail()) ?? undefined));
   const states = new Map(listDeploys().map((s) => [s.name, s]));
+  withLocalSecrets(c, states, Boolean(access));
   const shots = await snapshots(
     c.projects.flatMap((p) => p.deploys).map((d) => ({ name: d.name, url: d.url, visibility: d.visibility })),
     states,
@@ -213,6 +253,7 @@ export async function stop(name: string): Promise<{ name: string; stopped: boole
   if (s.backend === 'workers')
     return { name, stopped: false, note: 'Workers deploys have no local process; `remove` deletes the worker on Cloudflare.' };
   await stopTunnel(name);
+  await refreshCatalogPage(name);
   return { name, stopped: true };
 }
 
@@ -229,6 +270,7 @@ export async function remove(name: string): Promise<{ name: string; removed: tru
   if (s.backend === 'tunnel') await stopTunnel(name);
   if (s.backend === 'workers' && s.status === 'deployed') remote = await deleteWorker(name);
   removeDeployDir(name);
+  await refreshCatalogPage(name);
   return { name, removed: true, remote };
 }
 

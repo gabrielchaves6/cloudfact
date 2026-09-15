@@ -13,7 +13,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - `cloudfact catalog --publish` publishes the catalog itself as a page: one card per deploy with a thumbnail of the real page, visibility and kind badges, search, list view and a filter per project. The page requires Cloudflare Access sign-in by default, for the email that owns the account. Thumbnails are captured at publish time from the published folder, the app's port or the URL (with the private key), so deploys behind a sign-in get a preview too; they render with scripts off in a sandboxed frame.
 - The catalog also finds quick tunnels running on this machine by asking `cloudflared` for its public hostname, so a page still serving from here shows up even when this machine has no record of it (an older cloudfact, another folder, or another tool), flagged `no local record`.
 - Once a catalog page exists, every deploy refreshes it in the background, so the index never goes stale. After a few deploys with no catalog page, the CLI mentions the command once.
-- MCP tools `catalog` and `project`.
+- On a catalog page behind sign-in, every card links to its deploy with the private key already in the link, so one sign-in opens everything. `cloudfact creds <name>` records the app's own login (user, password, note) to be revealed on that page with a click. A catalog published with `--public` carries neither.
+- MCP tools `catalog`, `project` and `credentials`.
 
 ## [0.7.4] - 2026-09-15
 

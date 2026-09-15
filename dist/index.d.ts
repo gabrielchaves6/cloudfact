@@ -42,6 +42,13 @@ interface DeployState {
     files?: number;
     /** Project this deploy belongs to in the account catalog. */
     project?: string | null;
+    /** How to get into the app behind the link (its own login, not cloudfact's). Never leaves this machine
+     *  except into a catalog page that is itself behind sign-in. */
+    creds?: {
+        user?: string | null;
+        password?: string | null;
+        note?: string | null;
+    } | null;
     /** Cloudflare Access app in front of this deploy (identity sign-in). */
     access?: {
         appId: string;
@@ -116,6 +123,14 @@ interface CatalogEntry {
     modifiedAt: string | null;
     backend: Backend;
     status: DeployStatus;
+    /** Link that opens the page already unlocked (carries the private key). Only for a gated catalog. */
+    openUrl?: string | null;
+    /** The app's own login, shown on a catalog page that is behind sign-in. */
+    creds?: {
+        user?: string | null;
+        password?: string | null;
+        note?: string | null;
+    } | null;
     /**
      * Live on this machine but with no local record: published by an older cloudfact whose state is gone,
      * from another folder or home, or by another tool entirely. The page works; cloudfact cannot manage it.
@@ -200,6 +215,21 @@ declare function resolveBackend(choice: DeployOptions['backend']): Backend;
 declare function deploy(opts?: DeployOptions): Promise<DeployResult>;
 /** Publish an app that already listens on a port, here or on a machine reachable over SSH. Tunnel backend only. Private by default. */
 declare function expose(opts: ExposeOptions): Promise<DeployResult>;
+/**
+ * Fills in what only this machine knows: the link that already carries the private key, and the app's own
+ * login. A page open to anyone must never carry either; a page behind sign-in may, and that is the point
+ * of it — one place that opens everything you host without asking for a second secret.
+ */
+declare function withLocalSecrets(c: CatalogResult, states: Map<string, DeployState>, gated: boolean): CatalogResult;
+/**
+ * Records how to get into the app behind a deploy (its own login, not cloudfact's). Stored with the
+ * deploy on this machine and surfaced only on a catalog page that is itself behind sign-in.
+ */
+declare function setCredentials(name: string, creds: {
+    user?: string | null;
+    password?: string | null;
+    note?: string | null;
+} | null): DeploySummary;
 /**
  * One-off nudge: once someone has a handful of deploys and no catalog page yet, it is worth telling them
  * the page exists. Returns the line to print exactly once, then never again.
@@ -306,4 +336,4 @@ interface ToolDefinition<Schema extends ZodRawShape = ZodRawShape> {
 
 declare const tools: ToolDefinition<any>[];
 
-export { type Backend, type BackendChoice, type CatalogEntry, type CatalogResult, type Credentials, type DeployKind, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type ExposeOptions, type SshTarget, type StatusResult, type ToolDefinition, VERSION, type Visibility, catalog, catalogHint, createServer, deploy, doctor, expose, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, publishCatalog, readLogs, refreshCatalogPage, remove, resolveBackend, rotate, setProject, status, stop, stopAll, summarize, tools };
+export { type Backend, type BackendChoice, type CatalogEntry, type CatalogResult, type Credentials, type DeployKind, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type ExposeOptions, type SshTarget, type StatusResult, type ToolDefinition, VERSION, type Visibility, catalog, catalogHint, createServer, deploy, doctor, expose, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, publishCatalog, readLogs, refreshCatalogPage, remove, resolveBackend, rotate, setCredentials, setProject, status, stop, stopAll, summarize, tools, withLocalSecrets };

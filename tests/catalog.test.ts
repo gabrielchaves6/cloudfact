@@ -170,3 +170,151 @@ describe('pages served from this machine that cloudfact never recorded', () => {
     });
   });
 });
+
+describe('what the catalog page is allowed to carry', () => {
+  let home: string;
+  beforeAll(() => {
+    home = tmpDir();
+    process.env.CLOUDFACT_HOME = home;
+    fs.mkdirSync(path.join(home, 'deploys', 'painel'), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, 'deploys', 'painel', 'state.json'),
+      JSON.stringify({
+        name: 'painel',
+        backend: 'tunnel',
+        mode: 'proxy',
+        status: 'running',
+        startedAt: '2026-09-15T09:00:00Z',
+        url: 'https://abc.trycloudflare.com',
+        privateUrl: 'https://abc.trycloudflare.com/#key=SEGREDO',
+        key: 'SEGREDO',
+        hostPid: 1,
+        creds: { user: 'ana', password: 'TROCAR123' },
+      }),
+    );
+  });
+  afterAll(() => fs.rmSync(home, { recursive: true, force: true }));
+
+  it('a page behind sign-in opens the deploys directly and can show their login', async () => {
+    const { galleryHtml } = await import('../src/services/gallery.js');
+    const html = galleryHtml({
+      accountId: 'acc',
+      accountName: null,
+      subdomain: null,
+      projects: [
+        {
+          project: null,
+          deploys: [
+            {
+              name: 'painel',
+              project: null,
+              url: 'https://abc.trycloudflare.com',
+              openUrl: 'https://abc.trycloudflare.com/#key=SEGREDO',
+              creds: { user: 'ana', password: 'TROCAR123' },
+              inAccount: false,
+              local: true,
+              access: null,
+              visibility: 'private',
+              kind: 'app',
+              hasAssets: false,
+              createdAt: null,
+              modifiedAt: null,
+              backend: 'tunnel',
+              status: 'running',
+            },
+          ],
+        },
+      ],
+    });
+    expect(html).toContain('#key=SEGREDO');
+    expect(html).toContain('TROCAR123');
+    expect(html).toContain('data-creds>');
+    expect(html).not.toContain('<iframe src='); // never points a frame at the live site
+  });
+
+  it('a page open to anyone carries neither keys nor logins', async () => {
+    const { withLocalSecrets } = await import('../src/cloudfact.js');
+    const { galleryHtml } = await import('../src/services/gallery.js');
+    const states = new Map([
+      [
+        'painel',
+        {
+          name: 'painel',
+          privateUrl: 'https://abc.trycloudflare.com/#key=SEGREDO',
+          creds: { user: 'ana', password: 'TROCAR123' },
+        } as never,
+      ],
+    ]);
+    const base = () => ({
+      accountId: 'acc',
+      accountName: null,
+      subdomain: null,
+      projects: [
+        {
+          project: null,
+          deploys: [
+            {
+              name: 'painel',
+              project: null,
+              url: 'https://abc.trycloudflare.com',
+              inAccount: false,
+              local: true,
+              access: null,
+              visibility: 'private' as const,
+              kind: 'app' as const,
+              hasAssets: false,
+              createdAt: null,
+              modifiedAt: null,
+              backend: 'tunnel' as const,
+              status: 'running' as const,
+            },
+          ],
+        },
+      ],
+    });
+    const open = galleryHtml(withLocalSecrets(base(), states, false));
+    expect(open).not.toContain('SEGREDO');
+    expect(open).not.toContain('TROCAR123');
+    expect(open).not.toContain('data-creds>'); // no reveal button on any card
+
+    const gated = galleryHtml(withLocalSecrets(base(), states, true));
+    expect(gated).toContain('#key=SEGREDO');
+    expect(gated).toContain('TROCAR123');
+  });
+});
+
+describe('the login box stays shut until asked', () => {
+  it('hides credentials by default even though the class sets a display', async () => {
+    const { galleryHtml } = await import('../src/services/gallery.js');
+    const html = galleryHtml({
+      accountId: 'a',
+      accountName: null,
+      subdomain: null,
+      projects: [
+        {
+          project: null,
+          deploys: [
+            {
+              name: 'app',
+              project: null,
+              url: 'https://x.dev',
+              creds: { user: 'ana', password: 'TROCAR123' },
+              inAccount: true,
+              local: true,
+              access: null,
+              visibility: 'private',
+              kind: 'app',
+              hasAssets: false,
+              createdAt: null,
+              modifiedAt: null,
+              backend: 'workers',
+              status: 'deployed',
+            },
+          ],
+        },
+      ],
+    });
+    expect(html).toContain('<div class="creds" hidden>');
+    expect(html).toContain('.creds[hidden]{display:none}');
+  });
+});

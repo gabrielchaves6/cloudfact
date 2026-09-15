@@ -22493,6 +22493,15 @@ h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;
 .pill.vis-public{color:#93cba4;border-color:#23392b}
 .sub svg{flex:none}
 .tag{background:#1f1f1f;border:1px solid #2a2a2a;border-radius:6px;padding:2px 8px;font-size:11.5px;color:#9a9a9a}
+.card a{color:inherit;text-decoration:none}
+.actions{display:flex;gap:7px;margin-top:10px}
+.mini{background:#1c1c1c;border:1px solid #2c2c2c;color:#b4b4b4;border-radius:6px;padding:3px 9px;font:inherit;font-size:11.5px;cursor:pointer}
+.mini:hover{background:#242424;color:#ededed}
+.creds{margin-top:9px;display:grid;gap:4px}
+.creds[hidden]{display:none}
+.creds div{display:flex;gap:8px;align-items:center;font-size:12px}
+.creds span{color:#7d7d7d;min-width:38px}
+.creds code{background:#1c1c1c;border:1px solid #2c2c2c;border-radius:5px;padding:2px 7px;color:#d8d8d8;user-select:all}
 .empty{color:#7a7a7a;padding:40px 0}
 body.list .grid{display:flex;flex-direction:column;gap:9px}
 body.list .shot{display:none}
@@ -22516,8 +22525,8 @@ const fit = () => {
 };
 fit();
 addEventListener('resize', fit);
-const rel = (iso) => {
-  if (!iso) return 'never published';
+const rel = (iso, fallback) => {
+  if (!iso) return fallback;
   const d = (Date.now() - Date.parse(iso)) / 1000;
   if (d < 90) return 'Edited just now';
   if (d < 3600) return 'Edited ' + Math.round(d / 60) + 'm ago';
@@ -22525,7 +22534,25 @@ const rel = (iso) => {
   if (d < 86400 * 7) return 'Edited ' + Math.round(d / 86400) + 'd ago';
   return 'Edited ' + new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 };
-for (const el of document.querySelectorAll('[data-at]')) el.textContent = rel(el.dataset.at);
+for (const el of document.querySelectorAll('[data-at]')) el.textContent = rel(el.dataset.at, el.textContent);
+document.addEventListener('click', (e) => {
+  const copy = e.target.closest('[data-copy]');
+  if (copy) {
+    e.preventDefault();
+    navigator.clipboard?.writeText(copy.dataset.copy);
+    const was = copy.textContent;
+    copy.textContent = 'Copied';
+    setTimeout(() => (copy.textContent = was), 1200);
+    return;
+  }
+  const show = e.target.closest('[data-creds]');
+  if (show) {
+    e.preventDefault();
+    const box = show.closest('.meta').querySelector('.creds');
+    box.hidden = !box.hidden;
+    show.textContent = box.hidden ? 'Show login' : 'Hide login';
+  }
+});
 const search = document.getElementById('q');
 const apply = () => {
   const q = search.value.trim().toLowerCase();
@@ -22563,24 +22590,36 @@ function galleryHtml(c, opts = {}) {
   const projects = c.projects.map((p) => p.project).filter((p) => Boolean(p));
   const total = c.projects.reduce((n, p) => n + p.deploys.length, 0);
   const card = (d) => {
-    const where = d.url ? esc2(d.url) : "";
     const snap = opts.snapshots?.[d.name];
-    const preview = snap ? `<iframe srcdoc="${esc2(snap)}" loading="lazy" tabindex="-1" sandbox="" title=""></iframe>` : d.url && d.visibility === "public" ? `<iframe src="${where}" loading="lazy" tabindex="-1" sandbox="allow-scripts" title=""></iframe>` : `<div class="fallback"><div class="mono">${esc2(d.name.slice(0, 2))}</div><div class="why">${d.visibility === "access" ? "sign-in required" : d.visibility === "private" ? "private link" : "not reachable from here"}</div></div>`;
+    const preview = snap ? `<iframe srcdoc="${esc2(snap)}" loading="lazy" tabindex="-1" sandbox="" title=""></iframe>` : `<div class="fallback"><div class="mono">${esc2(d.name.slice(0, 2))}</div><div class="why">${d.visibility === "access" ? "sign-in required" : d.visibility === "private" ? "private link" : "no preview"}</div></div>`;
     const badge = d.untracked ? '<span class="tag">no local record</span>' : d.inAccount ? "" : '<span class="tag">local tunnel</span>';
     const search = [d.name, d.project ?? "", d.url ?? "", VIS_LABEL[d.visibility], KIND_LABEL[d.kind]].join(" ").toLowerCase();
-    return `<a class="card" href="${where || "#"}" target="_blank" rel="noopener"
-  data-project="${esc2(d.project ?? "")}" data-vis="${esc2(d.visibility)}" data-kind="${esc2(d.kind)}" data-search="${esc2(search)}">
+    const open = d.openUrl ?? d.url ?? "";
+    const creds = d.creds ? `<div class="creds" hidden>${[
+      d.creds.user ? `<div><span>user</span><code>${esc2(d.creds.user)}</code></div>` : "",
+      d.creds.password ? `<div><span>pass</span><code>${esc2(d.creds.password)}</code></div>` : "",
+      d.creds.note ? `<div><span>note</span><code>${esc2(d.creds.note)}</code></div>` : ""
+    ].join("")}</div>` : "";
+    const actions = `<div class="actions">
+      ${open ? `<button class="mini" data-copy="${esc2(open)}">Copy link</button>` : ""}
+      ${d.creds ? '<button class="mini" data-creds>Show login</button>' : ""}
+    </div>`;
+    return `<div class="card" data-project="${esc2(d.project ?? "")}" data-vis="${esc2(d.visibility)}" data-kind="${esc2(d.kind)}" data-search="${esc2(search)}">
+  <a class="open" href="${esc2(open) || "#"}" target="_blank" rel="noopener">
   <div class="shot">${preview}</div>
+  </a>
   <div class="meta">
-    <p class="title">${esc2(d.name)}</p>
+    <p class="title"><a href="${esc2(open) || "#"}" target="_blank" rel="noopener">${esc2(d.name)}</a></p>
     <div class="sub">
       <span class="pill vis-${esc2(d.visibility)}">${ICON[d.visibility]}${VIS_LABEL[d.visibility]}</span>
       <span class="pill">${ICON[d.kind]}${KIND_LABEL[d.kind]}</span>
       ${badge}
     </div>
-    <div class="sub when"><span data-at="${esc2(d.modifiedAt ?? "")}"></span></div>
+    <div class="sub when"><span data-at="${esc2(d.modifiedAt ?? "")}">${d.modifiedAt ? "" : esc2(d.status === "running" ? "Live now" : "No date")}</span></div>
+    ${actions}
+    ${creds}
   </div>
-</a>`;
+</div>`;
   };
   const sections = c.projects.map(
     (p) => `<section>
@@ -22672,7 +22711,7 @@ async function inlineStyles(html, resolve) {
   }
   return out;
 }
-var stripScripts = (html) => html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<script\b[^>]*\/?>/gi, "");
+var stripActive = (html) => html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<script\b[^>]*\/?>/gi, "").replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi, "").replace(/<iframe\b[^>]*\/?>/gi, "").replace(/<(object|embed|frame)\b[^>]*>/gi, "");
 async function snapshot(state, entry) {
   let html = null;
   let resolve = async () => null;
@@ -22698,7 +22737,7 @@ async function snapshot(state, entry) {
     }
   }
   if (!html) return null;
-  const styled = await inlineStyles(stripScripts(html), resolve);
+  const styled = await inlineStyles(stripActive(html), resolve);
   return styled.length > MAX_HTML ? styled.slice(0, MAX_HTML) : styled;
 }
 async function snapshots(entries, states) {
@@ -22788,6 +22827,22 @@ async function expose(opts) {
   await refreshCatalogPage(name);
   return exposed;
 }
+function withLocalSecrets(c, states, gated) {
+  for (const group of c.projects)
+    for (const d of group.deploys) {
+      const st = gated ? states.get(d.name) : void 0;
+      d.openUrl = st ? st.privateUrl ?? d.url : null;
+      d.creds = st?.creds ?? null;
+    }
+  return c;
+}
+function setCredentials(name, creds) {
+  const s = readState(name);
+  if (!s) throw new Error(`deploy "${name}" does not exist`);
+  const next = { ...s, creds: creds && (creds.user || creds.password || creds.note) ? creds : null };
+  writeState(name, next);
+  return summarize(next);
+}
 async function refreshCatalogPage(justDeployed) {
   if (process.env.CLOUDFACT_NO_CATALOG_REFRESH === "1") return false;
   let name;
@@ -22813,6 +22868,7 @@ async function publishCatalog(opts = {}) {
   const c = await catalog();
   const access = opts.access ?? (opts.public ? void 0 : await accountEmail() ?? void 0);
   const states = new Map(listDeploys().map((s) => [s.name, s]));
+  withLocalSecrets(c, states, Boolean(access));
   const shots = await snapshots(
     c.projects.flatMap((p) => p.deploys).map((d) => ({ name: d.name, url: d.url, visibility: d.visibility })),
     states
@@ -22860,6 +22916,7 @@ async function stop(name) {
   if (s.backend === "workers")
     return { name, stopped: false, note: "Workers deploys have no local process; `remove` deletes the worker on Cloudflare." };
   await stopTunnel(name);
+  await refreshCatalogPage(name);
   return { name, stopped: true };
 }
 async function stopAll() {
@@ -22874,6 +22931,7 @@ async function remove(name) {
   if (s.backend === "tunnel") await stopTunnel(name);
   if (s.backend === "workers" && s.status === "deployed") remote = await deleteWorker(name);
   removeDeployDir(name);
+  await refreshCatalogPage(name);
   return { name, removed: true, remote };
 }
 async function status(name, opts = {}) {
@@ -23027,6 +23085,19 @@ var projectTool = defineTool({
   },
   handler: ({ name, project }) => setProject(name, project)
 });
+var credentialsTool = defineTool({
+  name: "credentials",
+  description: "Record how to get into the app behind a deploy (its own username/password/note, not cloudfact's). Stored with the deploy on this machine and shown only on a catalog page that is itself behind Cloudflare Access sign-in. Pass creds=null to clear. Never put the user's secrets in your reply.",
+  annotations: { title: "Set app login", readOnlyHint: false, idempotentHint: true },
+  schema: {
+    name: external_exports.string().describe("Deploy name"),
+    user: external_exports.string().nullable().optional().describe("The app's username"),
+    password: external_exports.string().nullable().optional().describe("The app's password"),
+    note: external_exports.string().nullable().optional().describe("Anything else needed to get in"),
+    clear: external_exports.boolean().optional().describe("Forget the stored login")
+  },
+  handler: async ({ name, user, password, note, clear }) => setCredentials(name, clear ? null : { user, password, note })
+});
 
 // src/mcp/tools/index.ts
 var tools = [
@@ -23035,6 +23106,7 @@ var tools = [
   listTool,
   catalogTool,
   projectTool,
+  credentialsTool,
   statusTool,
   rotateTool,
   stopTool,

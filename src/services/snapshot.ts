@@ -71,7 +71,14 @@ async function inlineStyles(html: string, resolve: Resolver): Promise<string> {
   return out;
 }
 
-const stripScripts = (html: string) => html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<script\b[^>]*\/?>/gi, '');
+/** A thumbnail must never reach the network: nested frames could challenge the visitor for credentials. */
+const stripActive = (html: string) =>
+  html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<script\b[^>]*\/?>/gi, '')
+    .replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi, '')
+    .replace(/<iframe\b[^>]*\/?>/gi, '')
+    .replace(/<(object|embed|frame)\b[^>]*>/gi, '');
 
 /**
  * Best-effort thumbnail for one deploy. Returns the HTML to drop into a sandboxed frame, or null when
@@ -104,7 +111,7 @@ export async function snapshot(state: DeployState | undefined, entry: { url: str
     }
   }
   if (!html) return null;
-  const styled = await inlineStyles(stripScripts(html), resolve);
+  const styled = await inlineStyles(stripActive(html), resolve);
   return styled.length > MAX_HTML ? styled.slice(0, MAX_HTML) : styled;
 }
 

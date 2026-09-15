@@ -39,6 +39,15 @@ h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;
 .pill.vis-public{color:#93cba4;border-color:#23392b}
 .sub svg{flex:none}
 .tag{background:#1f1f1f;border:1px solid #2a2a2a;border-radius:6px;padding:2px 8px;font-size:11.5px;color:#9a9a9a}
+.card a{color:inherit;text-decoration:none}
+.actions{display:flex;gap:7px;margin-top:10px}
+.mini{background:#1c1c1c;border:1px solid #2c2c2c;color:#b4b4b4;border-radius:6px;padding:3px 9px;font:inherit;font-size:11.5px;cursor:pointer}
+.mini:hover{background:#242424;color:#ededed}
+.creds{margin-top:9px;display:grid;gap:4px}
+.creds[hidden]{display:none}
+.creds div{display:flex;gap:8px;align-items:center;font-size:12px}
+.creds span{color:#7d7d7d;min-width:38px}
+.creds code{background:#1c1c1c;border:1px solid #2c2c2c;border-radius:5px;padding:2px 7px;color:#d8d8d8;user-select:all}
 .empty{color:#7a7a7a;padding:40px 0}
 body.list .grid{display:flex;flex-direction:column;gap:9px}
 body.list .shot{display:none}
@@ -68,8 +77,8 @@ const fit = () => {
 };
 fit();
 addEventListener('resize', fit);
-const rel = (iso) => {
-  if (!iso) return 'never published';
+const rel = (iso, fallback) => {
+  if (!iso) return fallback;
   const d = (Date.now() - Date.parse(iso)) / 1000;
   if (d < 90) return 'Edited just now';
   if (d < 3600) return 'Edited ' + Math.round(d / 60) + 'm ago';
@@ -77,7 +86,25 @@ const rel = (iso) => {
   if (d < 86400 * 7) return 'Edited ' + Math.round(d / 86400) + 'd ago';
   return 'Edited ' + new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 };
-for (const el of document.querySelectorAll('[data-at]')) el.textContent = rel(el.dataset.at);
+for (const el of document.querySelectorAll('[data-at]')) el.textContent = rel(el.dataset.at, el.textContent);
+document.addEventListener('click', (e) => {
+  const copy = e.target.closest('[data-copy]');
+  if (copy) {
+    e.preventDefault();
+    navigator.clipboard?.writeText(copy.dataset.copy);
+    const was = copy.textContent;
+    copy.textContent = 'Copied';
+    setTimeout(() => (copy.textContent = was), 1200);
+    return;
+  }
+  const show = e.target.closest('[data-creds]');
+  if (show) {
+    e.preventDefault();
+    const box = show.closest('.meta').querySelector('.creds');
+    box.hidden = !box.hidden;
+    show.textContent = box.hidden ? 'Show login' : 'Hide login';
+  }
+});
 const search = document.getElementById('q');
 const apply = () => {
   const q = search.value.trim().toLowerCase();
@@ -120,32 +147,46 @@ export function galleryHtml(c: CatalogResult, opts: { title?: string; snapshots?
   const total = c.projects.reduce((n, p) => n + p.deploys.length, 0);
 
   const card = (d: CatalogResult['projects'][number]['deploys'][number]): string => {
-    const where = d.url ? esc(d.url) : '';
     // a snapshot taken at publish time (scripts off) shows the real page even when a gate guards it;
     // a site open to everyone can simply be framed live; anything else falls back to a monogram
     const snap = opts.snapshots?.[d.name];
+    // Only ever render a snapshot captured at publish time. Pointing a frame at the live site would let
+    // that site drive the visitor's browser — an HTTP auth challenge there pops a login box over this page.
     const preview = snap
       ? `<iframe srcdoc="${esc(snap)}" loading="lazy" tabindex="-1" sandbox="" title=""></iframe>`
-      : d.url && d.visibility === 'public'
-        ? `<iframe src="${where}" loading="lazy" tabindex="-1" sandbox="allow-scripts" title=""></iframe>`
-        : `<div class="fallback"><div class="mono">${esc(d.name.slice(0, 2))}</div><div class="why">${
-            d.visibility === 'access' ? 'sign-in required' : d.visibility === 'private' ? 'private link' : 'not reachable from here'
-          }</div></div>`;
+      : `<div class="fallback"><div class="mono">${esc(d.name.slice(0, 2))}</div><div class="why">${
+          d.visibility === 'access' ? 'sign-in required' : d.visibility === 'private' ? 'private link' : 'no preview'
+        }</div></div>`;
     const badge = d.untracked ? '<span class="tag">no local record</span>' : d.inAccount ? '' : '<span class="tag">local tunnel</span>';
     const search = [d.name, d.project ?? '', d.url ?? '', VIS_LABEL[d.visibility], KIND_LABEL[d.kind]].join(' ').toLowerCase();
-    return `<a class="card" href="${where || '#'}" target="_blank" rel="noopener"
-  data-project="${esc(d.project ?? '')}" data-vis="${esc(d.visibility)}" data-kind="${esc(d.kind)}" data-search="${esc(search)}">
+    const open = d.openUrl ?? d.url ?? '';
+    const creds = d.creds
+      ? `<div class="creds" hidden>${[
+          d.creds.user ? `<div><span>user</span><code>${esc(d.creds.user)}</code></div>` : '',
+          d.creds.password ? `<div><span>pass</span><code>${esc(d.creds.password)}</code></div>` : '',
+          d.creds.note ? `<div><span>note</span><code>${esc(d.creds.note)}</code></div>` : '',
+        ].join('')}</div>`
+      : '';
+    const actions = `<div class="actions">
+      ${open ? `<button class="mini" data-copy="${esc(open)}">Copy link</button>` : ''}
+      ${d.creds ? '<button class="mini" data-creds>Show login</button>' : ''}
+    </div>`;
+    return `<div class="card" data-project="${esc(d.project ?? '')}" data-vis="${esc(d.visibility)}" data-kind="${esc(d.kind)}" data-search="${esc(search)}">
+  <a class="open" href="${esc(open) || '#'}" target="_blank" rel="noopener">
   <div class="shot">${preview}</div>
+  </a>
   <div class="meta">
-    <p class="title">${esc(d.name)}</p>
+    <p class="title"><a href="${esc(open) || '#'}" target="_blank" rel="noopener">${esc(d.name)}</a></p>
     <div class="sub">
       <span class="pill vis-${esc(d.visibility)}">${ICON[d.visibility]}${VIS_LABEL[d.visibility]}</span>
       <span class="pill">${ICON[d.kind]}${KIND_LABEL[d.kind]}</span>
       ${badge}
     </div>
-    <div class="sub when"><span data-at="${esc(d.modifiedAt ?? '')}"></span></div>
+    <div class="sub when"><span data-at="${esc(d.modifiedAt ?? '')}">${d.modifiedAt ? '' : esc(d.status === 'running' ? 'Live now' : 'No date')}</span></div>
+    ${actions}
+    ${creds}
   </div>
-</a>`;
+</div>`;
   };
 
   const sections = c.projects
