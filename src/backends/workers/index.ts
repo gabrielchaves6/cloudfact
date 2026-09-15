@@ -5,7 +5,7 @@ import { readConfig } from '../../config.js';
 import { deployDir, readState, summarize, writeState } from '../../services/state.js';
 import { credentials, runWrangler } from '../../services/wrangler.js';
 import { WORKER_SOURCE, wranglerConfig } from './gate-worker.js';
-import { accessContext, deleteAccessApp, upsertAccessApp } from '../../services/access.js';
+import { accessContext, accessVars, deleteAccessApp, upsertAccessApp, workersSubdomain } from '../../services/access.js';
 import type { DeployMode, DeployResult } from '../../types.js';
 
 export interface WorkersTarget {
@@ -82,13 +82,18 @@ export async function deployWorkers(t: WorkersTarget): Promise<DeployResult> {
   const compatibilityDate = new Date().toISOString().slice(0, 10);
   const logFile = path.join(dir, 'wrangler.log');
   let r;
+  let access = null;
   const accessCtx = t.access?.length ? accessContext(cfg) : null; // validates the token before touching anything
   if (accessCtx) {
+    // The Access app (and its AUD) must exist before the Worker goes live: the gate Worker verifies the
+    // Access JWT against that AUD. The hostname is predictable from the account's workers.dev subdomain.
+    const domain = `${t.name}.${await workersSubdomain(accessCtx)}.workers.dev`;
+    access = await upsertAccessApp(accessCtx, { name: t.name, domain, emails: t.access! });
     const workerDir = path.join(dir, 'worker');
     fs.mkdirSync(workerDir, { recursive: true, mode: 0o700 });
     fs.writeFileSync(path.join(workerDir, 'index.js'), WORKER_SOURCE);
     fs.writeFileSync(path.join(workerDir, 'wrangler.jsonc'), wranglerConfig(t.name, compatibilityDate));
-    r = runWrangler(['deploy', '--config', path.join(workerDir, 'wrangler.jsonc'), '--var', 'CLOUDFACT_ACCESS:1'], {
+    r = runWrangler(['deploy', '--config', path.join(workerDir, 'wrangler.jsonc'), ...accessVars(access)], {
       cfg,
       creds,
       cwd: workerDir,
@@ -119,9 +124,20 @@ export async function deployWorkers(t: WorkersTarget): Promise<DeployResult> {
     throw new Error(`wrangler deploy failed:\n${r.text.slice(-1500)}`);
   }
   const url = (r.text.match(/https:\/\/[a-z0-9.-]+\.workers\.dev/g) ?? []).find((u) => u.includes(`//${t.name}.`)) ?? null;
-  let access = null;
-  if (accessCtx && url) {
+  if (accessCtx && access && url && new URL(url).host !== access.domain) {
+    // the subdomain changed under us: protect the real hostname and point the Worker at the new AUD
+    const workerDir = path.join(dir, 'worker');
     access = await upsertAccessApp(accessCtx, { name: t.name, domain: new URL(url).host, emails: t.access! });
+    const again = runWrangler(['deploy', '--config', path.join(workerDir, 'wrangler.jsonc'), ...accessVars(access)], {
+      cfg,
+      creds,
+      cwd: workerDir,
+      logFile,
+    });
+    if (again.status !== 0) {
+      writeState(t.name, { ...readState(t.name)!, status: 'error', error: again.text.slice(-1500) });
+      throw new Error(`wrangler deploy failed:\n${again.text.slice(-1500)}`);
+    }
   }
   const versionId = r.text.match(/Version ID:\s*([0-9a-f-]+)/)?.[1] ?? null;
   const state = {

@@ -16,6 +16,7 @@ function fakeCloudflareApi() {
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     const p = url.pathname.replace(/^\/client\/v4/, '');
     calls.push({ method, path: p, body });
+    if (p.endsWith('/workers/subdomain')) return json({ subdomain: 'example-sub' });
     if (p.endsWith('/access/organizations')) {
       if (method === 'GET')
         return org
@@ -112,8 +113,11 @@ describe('Cloudflare Access', () => {
     expect(app.domain).toBe('team-site.example-sub.workers.dev');
     expect(app.policies[0].include.map((i) => i.email.email)).toEqual(['ana@example.com', 'bob@example.com']);
     const log = fs.readFileSync(path.join(home, 'wrangler.log'), 'utf8');
-    expect(log).toContain('--var CLOUDFACT_ACCESS:1');
+    expect(log).toContain(
+      '--var CLOUDFACT_ACCESS:1 --var CLOUDFACT_ACCESS_AUD:aud-1 --var CLOUDFACT_ACCESS_TEAM:cloudfact-acc123.cloudflareaccess.com',
+    );
     expect(log).not.toContain('secret put');
+    expect(log.split('\n').filter((l) => l.startsWith('deploy'))).toHaveLength(1); // app created first: no second deploy needed
   });
 
   it('redeploy updates the existing app (PUT) instead of creating another', async () => {

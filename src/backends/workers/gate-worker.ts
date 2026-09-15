@@ -2,8 +2,10 @@
  * Source of the gate Worker deployed in front of static assets when a Workers deploy is private.
  * Same contract as the tunnel gate: `#key=` in the link → POST /api/session → HttpOnly cookie.
  * The key lives in the CLOUDFACT_KEY secret; optional expiry in the CLOUDFACT_KEY_EXPIRES var.
- * Access mode (CLOUDFACT_ACCESS=1): the request must have been authenticated by Cloudflare Access
- * (ctx.access present); otherwise 403. Fails closed: without a key or access configured, every request gets 503.
+ * Access mode (CLOUDFACT_ACCESS=1): the request must carry a valid Cloudflare Access JWT
+ * (Cf-Access-Jwt-Assertion header or CF_Authorization cookie) signed by the team's keys
+ * (https://<team>/cdn-cgi/access/certs) for this app's AUD; otherwise 403. Fails closed: without a key
+ * or the Access AUD/team configured, every request gets 503.
  */
 import { GATE_HTML } from '../tunnel/gate.js';
 
@@ -26,10 +28,81 @@ function cookieValue(request) {
 const reply = (status, body, headers) =>
   new Response(body, { status, headers: { 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...headers } });
 
+// --- Cloudflare Access JWT verification (RS256 against the team's JWKS, cached in the isolate) ---
+let certsCache = { team: null, keys: null, at: 0 };
+async function accessKeys(team, force) {
+  if (!force && certsCache.team === team && certsCache.keys && Date.now() - certsCache.at < 600000) return certsCache.keys;
+  const res = await fetch('https://' + team + '/cdn-cgi/access/certs');
+  if (!res.ok) throw new Error('access certs: HTTP ' + res.status);
+  const data = await res.json();
+  const keys = [];
+  for (const jwk of data.keys || []) {
+    if (jwk.kty !== 'RSA') continue;
+    const key = await crypto.subtle.importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
+    keys.push({ kid: jwk.kid, key });
+  }
+  certsCache = { team, keys, at: Date.now() };
+  return keys;
+}
+function b64url(s) {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = s.length % 4;
+  if (pad) s += '='.repeat(4 - pad);
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function accessToken(request) {
+  const header = request.headers.get('cf-access-jwt-assertion');
+  if (header) return header;
+  for (const part of (request.headers.get('cookie') || '').split(';')) {
+    const [k, ...v] = part.trim().split('=');
+    if (k === 'CF_Authorization') return v.join('=');
+  }
+  return null;
+}
+async function verifyAccess(request, team, aud) {
+  const token = accessToken(request);
+  if (!token) return false;
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+  let header, payload;
+  try {
+    header = JSON.parse(new TextDecoder().decode(b64url(parts[0])));
+    payload = JSON.parse(new TextDecoder().decode(b64url(parts[1])));
+  } catch {
+    return false;
+  }
+  if (!header || header.alg !== 'RS256' || !payload) return false;
+  let keys = await accessKeys(team, false);
+  let entry = keys.find((k) => k.kid === header.kid);
+  if (!entry) {
+    keys = await accessKeys(team, true); // key rotation: refresh once
+    entry = keys.find((k) => k.kid === header.kid);
+  }
+  if (!entry) return false;
+  const ok = await crypto.subtle.verify({ name: 'RSASSA-PKCS1-v1_5' }, entry.key, b64url(parts[2]), enc.encode(parts[0] + '.' + parts[1]));
+  if (!ok) return false;
+  const now = Math.floor(Date.now() / 1000);
+  if (typeof payload.exp !== 'number' || payload.exp <= now) return false;
+  if (typeof payload.nbf === 'number' && payload.nbf > now + 60) return false;
+  if (payload.iss !== 'https://' + team) return false;
+  const auds = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+  return auds.includes(aud);
+}
+
 export default {
   async fetch(request, env, ctx) {
     if (env.CLOUDFACT_ACCESS === '1') {
-      if (!ctx || !ctx.access) return reply(403, 'cloudfact: this site is protected by Cloudflare Access; the request did not come through it', { 'content-type': 'text/plain' });
+      if (!env.CLOUDFACT_ACCESS_AUD || !env.CLOUDFACT_ACCESS_TEAM) return reply(503, 'cloudfact: Cloudflare Access not configured for this site yet', { 'content-type': 'text/plain' });
+      let ok = false;
+      try {
+        ok = await verifyAccess(request, env.CLOUDFACT_ACCESS_TEAM, env.CLOUDFACT_ACCESS_AUD);
+      } catch {
+        ok = false;
+      }
+      if (!ok) return reply(403, 'cloudfact: this site is protected by Cloudflare Access and the request carried no valid Access token for it. Sign in at https://' + new URL(request.url).host + '/ (if you just signed in, the Access application may still be propagating; retry in a minute).', { 'content-type': 'text/plain' });
       const res = await env.ASSETS.fetch(request);
       const out = new Response(res.body, res);
       out.headers.set('cache-control', 'private, no-cache');

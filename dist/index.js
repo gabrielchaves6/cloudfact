@@ -7553,10 +7553,81 @@ function cookieValue(request) {
 const reply = (status, body, headers) =>
   new Response(body, { status, headers: { 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...headers } });
 
+// --- Cloudflare Access JWT verification (RS256 against the team's JWKS, cached in the isolate) ---
+let certsCache = { team: null, keys: null, at: 0 };
+async function accessKeys(team, force) {
+  if (!force && certsCache.team === team && certsCache.keys && Date.now() - certsCache.at < 600000) return certsCache.keys;
+  const res = await fetch('https://' + team + '/cdn-cgi/access/certs');
+  if (!res.ok) throw new Error('access certs: HTTP ' + res.status);
+  const data = await res.json();
+  const keys = [];
+  for (const jwk of data.keys || []) {
+    if (jwk.kty !== 'RSA') continue;
+    const key = await crypto.subtle.importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
+    keys.push({ kid: jwk.kid, key });
+  }
+  certsCache = { team, keys, at: Date.now() };
+  return keys;
+}
+function b64url(s) {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = s.length % 4;
+  if (pad) s += '='.repeat(4 - pad);
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function accessToken(request) {
+  const header = request.headers.get('cf-access-jwt-assertion');
+  if (header) return header;
+  for (const part of (request.headers.get('cookie') || '').split(';')) {
+    const [k, ...v] = part.trim().split('=');
+    if (k === 'CF_Authorization') return v.join('=');
+  }
+  return null;
+}
+async function verifyAccess(request, team, aud) {
+  const token = accessToken(request);
+  if (!token) return false;
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+  let header, payload;
+  try {
+    header = JSON.parse(new TextDecoder().decode(b64url(parts[0])));
+    payload = JSON.parse(new TextDecoder().decode(b64url(parts[1])));
+  } catch {
+    return false;
+  }
+  if (!header || header.alg !== 'RS256' || !payload) return false;
+  let keys = await accessKeys(team, false);
+  let entry = keys.find((k) => k.kid === header.kid);
+  if (!entry) {
+    keys = await accessKeys(team, true); // key rotation: refresh once
+    entry = keys.find((k) => k.kid === header.kid);
+  }
+  if (!entry) return false;
+  const ok = await crypto.subtle.verify({ name: 'RSASSA-PKCS1-v1_5' }, entry.key, b64url(parts[2]), enc.encode(parts[0] + '.' + parts[1]));
+  if (!ok) return false;
+  const now = Math.floor(Date.now() / 1000);
+  if (typeof payload.exp !== 'number' || payload.exp <= now) return false;
+  if (typeof payload.nbf === 'number' && payload.nbf > now + 60) return false;
+  if (payload.iss !== 'https://' + team) return false;
+  const auds = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+  return auds.includes(aud);
+}
+
 export default {
   async fetch(request, env, ctx) {
     if (env.CLOUDFACT_ACCESS === '1') {
-      if (!ctx || !ctx.access) return reply(403, 'cloudfact: this site is protected by Cloudflare Access; the request did not come through it', { 'content-type': 'text/plain' });
+      if (!env.CLOUDFACT_ACCESS_AUD || !env.CLOUDFACT_ACCESS_TEAM) return reply(503, 'cloudfact: Cloudflare Access not configured for this site yet', { 'content-type': 'text/plain' });
+      let ok = false;
+      try {
+        ok = await verifyAccess(request, env.CLOUDFACT_ACCESS_TEAM, env.CLOUDFACT_ACCESS_AUD);
+      } catch {
+        ok = false;
+      }
+      if (!ok) return reply(403, 'cloudfact: this site is protected by Cloudflare Access and the request carried no valid Access token for it. Sign in at https://' + new URL(request.url).host + '/ (if you just signed in, the Access application may still be propagating; retry in a minute).', { 'content-type': 'text/plain' });
       const res = await env.ASSETS.fetch(request);
       const out = new Response(res.body, res);
       out.headers.set('cache-control', 'private, no-cache');
@@ -7687,6 +7758,15 @@ async function upsertAccessApp(ctx, opts) {
   const app = existing ? await ctx.client.request("PUT", `${base}/${existing.id}`, body) : await ctx.client.request("POST", base, body);
   return { appId: app.id, aud: app.aud, domain: opts.domain, emails, teamDomain };
 }
+async function workersSubdomain(ctx) {
+  const r = await ctx.client.request("GET", `/accounts/${ctx.accountId}/workers/subdomain`);
+  if (!r?.subdomain)
+    throw new Error("this account has no workers.dev subdomain yet; deploy once without --access or pick one in the dashboard");
+  return r.subdomain;
+}
+function accessVars(app) {
+  return ["--var", "CLOUDFACT_ACCESS:1", "--var", `CLOUDFACT_ACCESS_AUD:${app.aud}`, "--var", `CLOUDFACT_ACCESS_TEAM:${app.teamDomain}`];
+}
 async function deleteAccessApp(ctx, appId) {
   await ctx.client.request("DELETE", `/accounts/${ctx.accountId}/access/apps/${appId}`);
 }
@@ -7750,13 +7830,16 @@ async function deployWorkers(t) {
   const compatibilityDate = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   const logFile = path5.join(dir, "wrangler.log");
   let r;
+  let access = null;
   const accessCtx = t.access?.length ? accessContext(cfg) : null;
   if (accessCtx) {
+    const domain = `${t.name}.${await workersSubdomain(accessCtx)}.workers.dev`;
+    access = await upsertAccessApp(accessCtx, { name: t.name, domain, emails: t.access });
     const workerDir = path5.join(dir, "worker");
     fs6.mkdirSync(workerDir, { recursive: true, mode: 448 });
     fs6.writeFileSync(path5.join(workerDir, "index.js"), WORKER_SOURCE);
     fs6.writeFileSync(path5.join(workerDir, "wrangler.jsonc"), wranglerConfig(t.name, compatibilityDate));
-    r = runWrangler(["deploy", "--config", path5.join(workerDir, "wrangler.jsonc"), "--var", "CLOUDFACT_ACCESS:1"], {
+    r = runWrangler(["deploy", "--config", path5.join(workerDir, "wrangler.jsonc"), ...accessVars(access)], {
       cfg,
       creds,
       cwd: workerDir,
@@ -7788,9 +7871,20 @@ ${s.text}` };
 ${r.text.slice(-1500)}`);
   }
   const url = (r.text.match(/https:\/\/[a-z0-9.-]+\.workers\.dev/g) ?? []).find((u) => u.includes(`//${t.name}.`)) ?? null;
-  let access = null;
-  if (accessCtx && url) {
+  if (accessCtx && access && url && new URL(url).host !== access.domain) {
+    const workerDir = path5.join(dir, "worker");
     access = await upsertAccessApp(accessCtx, { name: t.name, domain: new URL(url).host, emails: t.access });
+    const again = runWrangler(["deploy", "--config", path5.join(workerDir, "wrangler.jsonc"), ...accessVars(access)], {
+      cfg,
+      creds,
+      cwd: workerDir,
+      logFile
+    });
+    if (again.status !== 0) {
+      writeState(t.name, { ...readState(t.name), status: "error", error: again.text.slice(-1500) });
+      throw new Error(`wrangler deploy failed:
+${again.text.slice(-1500)}`);
+    }
   }
   const versionId = r.text.match(/Version ID:\s*([0-9a-f-]+)/)?.[1] ?? null;
   const state = {

@@ -139,6 +139,19 @@ export async function upsertAccessApp(ctx: AccessContext, opts: UpsertAppOptions
   return { appId: app.id, aud: app.aud, domain: opts.domain, emails, teamDomain };
 }
 
+/** The account's `*.workers.dev` subdomain, so the Access app can be created before the first deploy. */
+export async function workersSubdomain(ctx: AccessContext): Promise<string> {
+  const r = await ctx.client.request<{ subdomain?: string }>('GET', `/accounts/${ctx.accountId}/workers/subdomain`);
+  if (!r?.subdomain)
+    throw new Error('this account has no workers.dev subdomain yet; deploy once without --access or pick one in the dashboard');
+  return r.subdomain;
+}
+
+/** Worker vars that let the gate Worker verify Access JWTs for this app. */
+export function accessVars(app: Pick<AccessApp, 'aud' | 'teamDomain'>): string[] {
+  return ['--var', 'CLOUDFACT_ACCESS:1', '--var', `CLOUDFACT_ACCESS_AUD:${app.aud}`, '--var', `CLOUDFACT_ACCESS_TEAM:${app.teamDomain}`];
+}
+
 export async function deleteAccessApp(ctx: AccessContext, appId: string): Promise<void> {
   await ctx.client.request('DELETE', `/accounts/${ctx.accountId}/access/apps/${appId}`);
 }

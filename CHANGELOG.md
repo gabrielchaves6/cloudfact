@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-09-15
+
+### Fixed
+
+- `deploy --access`: after signing in, the site answered 403. The gate Worker relied on a runtime field that does not exist; it now verifies the Cloudflare Access JWT itself (`Cf-Access-Jwt-Assertion` header or `CF_Authorization` cookie, RS256 against `https://<team>/cdn-cgi/access/certs`, audience pinned to the app, issuer and expiry checked, keys cached and refreshed once on rotation). The Access application is created before the Worker is deployed so its audience can be injected as a var; if the workers.dev subdomain differs from the prediction, the app is re-created for the real hostname and the Worker redeployed.
+
 ### Fixed
 
 - Windows: `cloudflared` and `ssh` run in a hidden console (`windowsHide`), so the tunnel host no longer opens a Windows Terminal window on every start or reconnect.
