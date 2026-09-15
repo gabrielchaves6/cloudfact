@@ -6,12 +6,12 @@
     "url": "https://github.com/gabrielchaves6/cloudfact",
     "source": "github"
   },
-  "version": "0.8.4",
+  "version": "0.8.5",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "cloudfact",
-      "version": "0.8.4",
+      "version": "0.8.5",
       "transport": {
         "type": "stdio"
       },
