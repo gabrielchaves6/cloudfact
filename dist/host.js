@@ -1,37 +1,76 @@
-import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __esm = (fn, res, err) => function __init() {
-  if (err) throw err[0];
-  try {
-    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-  } catch (e) {
-    throw err = [e], e;
-  }
-};
+import { createRequire as __cloudfactRequire } from 'node:module'; const require = __cloudfactRequire(import.meta.url);
 
-// src/lib.js
-import fs2 from "node:fs";
-import path2 from "node:path";
-import os from "node:os";
-import { spawn, spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+// src/backends/tunnel/host.ts
+import fs5 from "fs";
+import http from "http";
+import path5 from "path";
+import { spawn } from "child_process";
+
+// src/config.ts
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { fileURLToPath } from "url";
+var here = path.dirname(fileURLToPath(import.meta.url));
+var HOME = process.env.CLOUDFACT_HOME ?? path.join(os.homedir(), ".cloudfact");
+var DEPLOYS_DIR = path.join(HOME, "deploys");
+var BIN_DIR = path.join(HOME, "bin");
+var CONFIG_FILE = path.join(HOME, "config.json");
+var WRANGLER_CONFIG = path.join(
+  process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), ".config"),
+  ".wrangler",
+  "config",
+  "default.toml"
+);
+var HOST_SCRIPT = process.env.CLOUDFACT_HOST_SCRIPT ?? path.join(here, "host.js");
+function readVersion() {
+  for (const candidate of [path.join(here, "..", "package.json"), path.join(here, "..", "..", "package.json")]) {
+    try {
+      return JSON.parse(fs.readFileSync(candidate, "utf8")).version;
+    } catch {
+    }
+  }
+  return "0.0.0";
+}
+var VERSION = readVersion();
 function readConfig() {
   try {
-    return JSON.parse(fs2.readFileSync(CONFIG, "utf8"));
+    return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
   } catch {
     return {};
   }
 }
+
+// src/logger.ts
+var log = {
+  info(message) {
+    if (!process.env.CLOUDFACT_QUIET) process.stderr.write(`${message}
+`);
+  },
+  ts(...parts) {
+    process.stderr.write(`${(/* @__PURE__ */ new Date()).toISOString()} ${parts.map(String).join(" ")}
+`);
+  }
+};
+
+// src/services/cloudflared.ts
+import fs2 from "fs";
+import os2 from "os";
+import path2 from "path";
+import { spawnSync } from "child_process";
+import { Readable } from "stream";
+import { pipeline } from "stream/promises";
+import { createGunzip } from "zlib";
 function findCloudflared(cfg = readConfig()) {
   const candidates = [
     cfg.cloudflaredPath,
     process.env.CLOUDFLARED,
-    path2.join(HOME, "bin", "cloudflared"),
+    path2.join(BIN_DIR, "cloudflared"),
     "cloudflared",
-    path2.join(os.homedir(), ".local/bin/cloudflared"),
+    path2.join(os2.homedir(), ".local/bin/cloudflared"),
     "/usr/local/bin/cloudflared",
     "/usr/bin/cloudflared"
-  ].filter(Boolean);
+  ].filter((c) => Boolean(c));
   for (const c of candidates) {
     if (c.includes("/")) {
       if (fs2.existsSync(c)) return c;
@@ -42,46 +81,39 @@ function findCloudflared(cfg = readConfig()) {
   }
   return null;
 }
+
+// src/services/state.ts
+import fs3 from "fs";
+import path3 from "path";
 function deployDir(name2) {
-  return path2.join(DEPLOYS, name2);
+  return path3.join(DEPLOYS_DIR, name2);
 }
 function readState(name2) {
   try {
-    return JSON.parse(fs2.readFileSync(path2.join(deployDir(name2), "state.json"), "utf8"));
+    return JSON.parse(fs3.readFileSync(path3.join(deployDir(name2), "state.json"), "utf8"));
   } catch {
     return null;
   }
 }
-function writeState(name2, state2) {
-  const d = deployDir(name2);
-  fs2.mkdirSync(d, { recursive: true, mode: 448 });
-  const tmp = path2.join(d, `.state.${process.pid}.tmp`);
-  fs2.writeFileSync(tmp, JSON.stringify(state2, null, 2) + "\n", { mode: 384 });
-  fs2.renameSync(tmp, path2.join(d, "state.json"));
+function writeState(name2, state) {
+  const dir2 = deployDir(name2);
+  fs3.mkdirSync(dir2, { recursive: true, mode: 448 });
+  const tmp = path3.join(dir2, `.state.${process.pid}.tmp`);
+  fs3.writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", { mode: 384 });
+  fs3.renameSync(tmp, path3.join(dir2, "state.json"));
 }
-var __dirname, HOME, DEPLOYS, CONFIG, HOST_SCRIPT, VERSION, WRANGLER_CONFIG;
-var init_lib = __esm({
-  "src/lib.js"() {
-    __dirname = path2.dirname(fileURLToPath(import.meta.url));
-    HOME = process.env.CLOUDFACT_HOME || path2.join(os.homedir(), ".cloudfact");
-    DEPLOYS = path2.join(HOME, "deploys");
-    CONFIG = path2.join(HOME, "config.json");
-    HOST_SCRIPT = path2.join(__dirname, "host.js");
-    VERSION = JSON.parse(fs2.readFileSync(path2.join(__dirname, "..", "package.json"), "utf8")).version;
-    WRANGLER_CONFIG = path2.join(process.env.XDG_CONFIG_HOME || path2.join(os.homedir(), ".config"), ".wrangler", "config", "default.toml");
-  }
-});
+function patchState(name2, patch) {
+  const current = readState(name2);
+  if (!current) throw new Error(`deploy "${name2}" n\xE3o existe`);
+  const next = { ...current, ...patch };
+  writeState(name2, next);
+  return next;
+}
 
-// src/host.js
-import http from "node:http";
-import fs3 from "node:fs";
-import path3 from "node:path";
-import { spawn as spawn2 } from "node:child_process";
-
-// src/static.js
-import fs from "node:fs";
-import path from "node:path";
-import crypto from "node:crypto";
+// src/backends/tunnel/static-server.ts
+import crypto from "crypto";
+import fs4 from "fs";
+import path4 from "path";
 var MIME = {
   ".html": "text/html; charset=utf-8",
   ".htm": "text/html; charset=utf-8",
@@ -100,8 +132,8 @@ var MIME = {
   ".jpeg": "image/jpeg",
   ".gif": "image/gif",
   ".webp": "image/webp",
-  ".ico": "image/x-icon",
   ".avif": "image/avif",
+  ".ico": "image/x-icon",
   ".pdf": "application/pdf",
   ".wasm": "application/wasm",
   ".woff": "font/woff",
@@ -121,7 +153,7 @@ var BASE_HEADERS = {
   "Referrer-Policy": "no-referrer",
   "Cache-Control": "no-cache"
 };
-var GATE = `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>cloudfact</title>
+var GATE_HTML = `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>cloudfact</title>
 <style>body{font:16px system-ui;margin:3rem;color:#333}</style><body><p id="m">Autenticando\u2026</p>
 <script>(async()=>{const el=document.getElementById('m');const m=location.hash.match(/key=([^&]+)/);
 if(!m){el.textContent='P\xE1gina privada: abra pelo link completo (com #key=\u2026).';return}
@@ -129,22 +161,21 @@ const r=await fetch('/api/session',{method:'POST',headers:{Authorization:'Bearer
 if(r.ok){history.replaceState(null,'',location.pathname+location.search);location.reload()}
 else el.textContent='Chave inv\xE1lida.'})()</script></body></html>`;
 function send(res, code, body, headers = {}) {
-  const buf = Buffer.isBuffer(body) ? body : Buffer.from(body ?? "");
+  const buf = Buffer.isBuffer(body) ? body : Buffer.from(body);
   res.writeHead(code, { ...BASE_HEADERS, "Content-Length": buf.length, ...headers });
   res.end(buf);
 }
-function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-}
+var escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 function listing(urlPath, absDir) {
-  const entries = fs.readdirSync(absDir, { withFileTypes: true }).filter((e) => !e.name.startsWith(".")).sort((a, b) => b.isDirectory() - a.isDirectory() || a.name.localeCompare(b.name));
+  const entries = fs4.readdirSync(absDir, { withFileTypes: true }).filter((e) => !e.name.startsWith(".")).sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
   const rows = entries.map((e) => {
-    const name2 = e.name + (e.isDirectory() ? "/" : "");
-    return `<li><a href="${escapeHtml(encodeURIComponent(e.name))}${e.isDirectory() ? "/" : ""}">${escapeHtml(name2)}</a></li>`;
+    const suffix = e.isDirectory() ? "/" : "";
+    return `<li><a href="${escapeHtml(encodeURIComponent(e.name))}${suffix}">${escapeHtml(e.name + suffix)}</a></li>`;
   }).join("");
+  const up = urlPath !== "/" ? '<li><a href="../">../</a></li>' : "";
   return `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>${escapeHtml(urlPath)}</title>
 <style>body{font:15px system-ui;margin:2rem;color:#222}li{margin:.25rem 0}</style>
-<body><h1>${escapeHtml(urlPath)}</h1><ul>${urlPath !== "/" ? '<li><a href="../">../</a></li>' : ""}${rows}</ul></body></html>`;
+<body><h1>${escapeHtml(urlPath)}</h1><ul>${up}${rows}</ul></body></html>`;
 }
 function safeResolve(root, urlPath) {
   let decoded;
@@ -156,162 +187,166 @@ function safeResolve(root, urlPath) {
   if (decoded.includes("\0")) return null;
   const parts = decoded.split("/").filter(Boolean);
   if (parts.some((p) => p === ".." || p.startsWith("."))) return null;
-  const abs = path.resolve(root, ...parts);
-  if (abs !== root && !abs.startsWith(root + path.sep)) return null;
+  const abs = path4.resolve(root, ...parts);
+  if (abs !== root && !abs.startsWith(root + path4.sep)) return null;
   return abs;
 }
-function authorized(req, cookieName, key) {
-  const raw = req.headers.cookie || "";
-  for (const part of raw.split(";")) {
+function timingEqual(a, b) {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+function hasCookie(req, name2, key) {
+  for (const part of (req.headers.cookie ?? "").split(";")) {
     const [k, ...v] = part.trim().split("=");
-    if (k === cookieName) {
-      const val = Buffer.from(v.join("="));
-      const exp = Buffer.from(key);
-      return val.length === exp.length && crypto.timingSafeEqual(val, exp);
-    }
+    if (k === name2) return timingEqual(v.join("="), key);
   }
   return false;
 }
-function createHandler(opts) {
-  const root = opts.root ? path.resolve(opts.root) : null;
-  const file = opts.file ? path.resolve(opts.file) : null;
-  const cookieName = opts.cookieName || "cloudfact_access";
-  return function handle(req, res) {
-    const method = req.method;
-    const url = new URL(req.url, "http://x");
-    if (opts.key) {
+function createStaticHandler(opts) {
+  const root = opts.root ? path4.resolve(opts.root) : null;
+  const file = opts.file ? path4.resolve(opts.file) : null;
+  const cookieName = opts.cookieName ?? "cloudfact_access";
+  const key = opts.key ?? null;
+  return (req, res) => {
+    const method = req.method ?? "GET";
+    const url = new URL(req.url ?? "/", "http://localhost");
+    if (key) {
       if (url.pathname === "/api/session" && method === "POST") {
-        const auth = req.headers.authorization || "";
+        const auth = req.headers.authorization ?? "";
         const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-        const a = Buffer.from(token), b = Buffer.from(opts.key);
-        if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
-          return send(res, 204, "", { "Set-Cookie": `${cookieName}=${opts.key}; Path=/; HttpOnly; Secure; SameSite=Lax` });
+        if (timingEqual(token, key)) {
+          return send(res, 204, "", { "Set-Cookie": `${cookieName}=${key}; Path=/; HttpOnly; Secure; SameSite=Lax` });
         }
         return send(res, 401, '{"error":"invalid key"}', { "Content-Type": "application/json" });
       }
-      if (!authorized(req, cookieName, opts.key)) {
-        return send(res, 200, GATE, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+      if (!hasCookie(req, cookieName, key)) {
+        return send(res, 200, GATE_HTML, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
       }
     }
     if (method !== "GET" && method !== "HEAD") return send(res, 405, "method not allowed");
     let abs;
     if (opts.mode === "file") {
-      if (url.pathname !== "/" && url.pathname !== "/index.html" && url.pathname !== "/" + path.basename(file)) return send(res, 404, "not found");
+      const allowed = /* @__PURE__ */ new Set(["/", "/index.html", `/${path4.basename(file ?? "")}`]);
+      if (!allowed.has(url.pathname)) return send(res, 404, "not found");
       abs = file;
     } else {
-      abs = safeResolve(root, url.pathname);
-      if (!abs) return send(res, 404, "not found");
+      abs = root ? safeResolve(root, url.pathname) : null;
     }
-    let st;
+    if (!abs) return send(res, 404, "not found");
+    let stat;
     try {
-      st = fs.statSync(abs);
+      stat = fs4.statSync(abs);
     } catch {
       return send(res, 404, "not found");
     }
-    if (st.isDirectory()) {
-      if (!url.pathname.endsWith("/")) return send(res, 301, "", { Location: url.pathname + "/" + url.search });
-      const idx = path.join(abs, "index.html");
-      if (fs.existsSync(idx)) {
-        abs = idx;
-        st = fs.statSync(idx);
-      } else return send(res, 200, listing(url.pathname, abs), { "Content-Type": "text/html; charset=utf-8" });
+    if (stat.isDirectory()) {
+      if (!url.pathname.endsWith("/")) return send(res, 301, "", { Location: `${url.pathname}/${url.search}` });
+      const index = path4.join(abs, "index.html");
+      if (fs4.existsSync(index)) {
+        abs = index;
+        stat = fs4.statSync(index);
+      } else {
+        return send(res, 200, listing(url.pathname, abs), { "Content-Type": "text/html; charset=utf-8" });
+      }
     }
-    const etag = `W/"${st.size.toString(16)}-${Math.floor(st.mtimeMs).toString(16)}"`;
+    const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
     if (req.headers["if-none-match"] === etag) {
       res.writeHead(304, { ...BASE_HEADERS, ETag: etag });
       return res.end();
     }
-    const type = MIME[path.extname(abs).toLowerCase()] || "application/octet-stream";
-    res.writeHead(200, { ...BASE_HEADERS, "Content-Type": type, "Content-Length": st.size, ETag: etag, "Last-Modified": st.mtime.toUTCString() });
+    res.writeHead(200, {
+      ...BASE_HEADERS,
+      "Content-Type": MIME[path4.extname(abs).toLowerCase()] ?? "application/octet-stream",
+      "Content-Length": stat.size,
+      ETag: etag,
+      "Last-Modified": stat.mtime.toUTCString()
+    });
     if (method === "HEAD") return res.end();
-    fs.createReadStream(abs).on("error", () => res.destroy()).pipe(res);
+    fs4.createReadStream(abs).on("error", () => res.destroy()).pipe(res);
   };
 }
 
-// src/host.js
-init_lib();
+// src/backends/tunnel/host.ts
+var TUNNEL_URL = /https:\/\/(?!api\.)[a-z0-9-]+\.trycloudflare\.com/;
 var name = process.argv[2];
 if (!name) {
-  console.error("uso: host.js <nome>");
+  log.ts("uso: host.js <nome>");
+  process.exit(2);
+}
+var initial = readState(name);
+if (!initial) {
+  log.ts("sem state.json para", name);
   process.exit(2);
 }
 var dir = deployDir(name);
-var state = readState(name);
-if (!state) {
-  console.error("sem state.json");
-  process.exit(2);
-}
-var log = (...a) => console.error((/* @__PURE__ */ new Date()).toISOString(), ...a);
-var patch = (p) => {
-  state = { ...readState(name), ...p };
-  writeState(name, state);
-};
-var TUNNEL_RE = /https:\/\/(?!api\.)[a-z0-9-]+\.trycloudflare\.com/g;
 var stopping = false;
 var tunnel = null;
 var restarts = 0;
-var handler = createHandler({ mode: state.mode, root: state.root, file: state.file, key: state.key });
-var server = http.createServer(handler);
+var server = http.createServer(createStaticHandler({ mode: initial.mode, root: initial.root, file: initial.file, key: initial.key }));
 server.keepAliveTimeout = 65e3;
 server.listen(0, "127.0.0.1", () => {
-  const port = server.address().port;
-  patch({ hostPid: process.pid, port, status: "starting", local: `http://127.0.0.1:${port}` });
-  log("servidor local na porta", port);
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  patchState(name, { hostPid: process.pid, port, status: "starting", local: `http://127.0.0.1:${port}` });
+  log.ts("servidor local na porta", port);
   startTunnel(port);
 });
 function startTunnel(port) {
   if (stopping) return;
   const bin = findCloudflared(readConfig());
   if (!bin) {
-    patch({ status: "error", error: "cloudflared n\xE3o encontrado" });
+    patchState(name, { status: "error", error: "cloudflared n\xE3o encontrado" });
     return;
   }
-  const out = fs3.openSync(path3.join(dir, "tunnel.log"), "a");
-  tunnel = spawn2(bin, ["tunnel", "--url", `http://127.0.0.1:${port}`, "--no-autoupdate", "--protocol", "http2"], { stdio: ["ignore", "pipe", "pipe"] });
-  patch({ tunnelPid: tunnel.pid, url: null, status: "starting" });
+  const logFd = fs5.openSync(path5.join(dir, "tunnel.log"), "a");
+  tunnel = spawn(bin, ["tunnel", "--url", `http://127.0.0.1:${port}`, "--no-autoupdate", "--protocol", "http2"], {
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  patchState(name, { tunnelPid: tunnel.pid ?? null, url: null, privateUrl: null, status: "starting" });
   let found = false;
   const scan = (chunk) => {
-    fs3.writeSync(out, chunk);
+    fs5.writeSync(logFd, chunk);
     if (found) return;
-    const m = String(chunk).match(TUNNEL_RE);
-    if (m) {
-      found = true;
-      const url = m[0];
-      const key = state.key;
-      patch({ url, privateUrl: key ? `${url}/#key=${key}` : null, status: "running", error: null, urlAt: (/* @__PURE__ */ new Date()).toISOString() });
-      log("t\xFAnel pronto:", url);
-    }
+    const match = chunk.toString().match(TUNNEL_URL);
+    if (!match) return;
+    found = true;
+    const url = match[0];
+    const key = readState(name)?.key;
+    patchState(name, {
+      url,
+      privateUrl: key ? `${url}/#key=${key}` : null,
+      status: "running",
+      error: null,
+      urlAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    log.ts("t\xFAnel pronto:", url);
   };
-  tunnel.stdout.on("data", scan);
-  tunnel.stderr.on("data", scan);
-  tunnel.on("exit", (code, sig) => {
-    fs3.closeSync(out);
+  tunnel.stdout?.on("data", scan);
+  tunnel.stderr?.on("data", scan);
+  tunnel.on("exit", (code, signal) => {
+    fs5.closeSync(logFd);
     tunnel = null;
     if (stopping) return;
     restarts += 1;
     const delay = Math.min(3e4, 2e3 * restarts);
-    log(`cloudflared saiu (code=${code} sig=${sig}); religando em ${delay / 1e3}s`);
-    patch({ status: "reconnecting", url: null, privateUrl: null, tunnelPid: null, restarts });
+    log.ts(`cloudflared saiu (code=${code} sig=${signal}); religando em ${delay / 1e3}s`);
+    patchState(name, { status: "reconnecting", url: null, privateUrl: null, tunnelPid: null, restarts });
     setTimeout(() => startTunnel(port), delay);
   });
 }
 function shutdown() {
   if (stopping) return;
   stopping = true;
-  log("encerrando");
-  patch({ status: "stopped", url: null, privateUrl: null, hostPid: null, tunnelPid: null, stoppedAt: (/* @__PURE__ */ new Date()).toISOString() });
-  if (tunnel) {
-    try {
-      tunnel.kill("SIGTERM");
-    } catch {
-    }
-  }
+  log.ts("encerrando");
+  patchState(name, { status: "stopped", url: null, privateUrl: null, hostPid: null, tunnelPid: null, stoppedAt: (/* @__PURE__ */ new Date()).toISOString() });
+  tunnel?.kill("SIGTERM");
   server.close();
   setTimeout(() => process.exit(0), 1500).unref();
 }
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
-process.on("uncaughtException", (e) => {
-  log("erro", e);
-  patch({ status: "error", error: String(e) });
+process.on("uncaughtException", (err) => {
+  log.ts("erro", err);
+  patchState(name, { status: "error", error: String(err) });
 });

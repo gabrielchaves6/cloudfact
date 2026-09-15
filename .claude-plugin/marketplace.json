@@ -7,7 +7,7 @@
       "name": "cloudfact",
       "source": "./",
       "description": "Publique um HTML ou uma pasta em uma URL pública na Cloudflare com /cloudfact.",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "category": "deployment"
     }
   ]

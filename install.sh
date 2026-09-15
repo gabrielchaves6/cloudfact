@@ -17,7 +17,7 @@ fi
 NODE="$(command -v node)"
 echo "código: $ROOT"
 
-mkdir -p ~/.local/bin && ln -sfn "$ROOT/dist/cloudfact.js" ~/.local/bin/cloudfact && echo "cli: ~/.local/bin/cloudfact"
+mkdir -p ~/.local/bin && ln -sfn "$ROOT/dist/bin.js" ~/.local/bin/cloudfact && echo "cli: ~/.local/bin/cloudfact"
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "  (adicione ~/.local/bin ao PATH)";; esac
 
 if command -v claude >/dev/null; then

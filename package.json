@@ -1,37 +1,76 @@
 {
   "name": "cloudfact",
-  "version": "0.2.0",
-  "description": "MCP + CLI para publicar páginas estáticas da VM na Cloudflare (túnel rápido ou Pages) com um comando.",
+  "version": "0.3.0",
+  "description": "Publish a folder or HTML file from your machine to a public Cloudflare URL with one command. CLI + MCP server + /cloudfact skill.",
   "type": "module",
   "bin": {
-    "cloudfact": "dist/cloudfact.js"
+    "cloudfact": "dist/bin.js"
   },
   "scripts": {
-    "build": "node build.js",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . && prettier --check .",
+    "format": "eslint --fix . && prettier --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run build",
     "start": "node dist/server.js",
-    "test": "npm run build && node test/smoke.js",
-    "prepare": "node build.js"
+    "inspect": "npx @modelcontextprotocol/inspector node dist/server.js",
+    "prepack": "npm run build"
   },
   "license": "MIT",
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "esbuild": "^0.28.2"
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.5.1",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.10.0",
+    "prettier": "^3.9.6",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.0",
+    "vitest": "^5.0.0"
   },
   "files": [
     "dist",
-    "src",
-    "bin",
     "skills",
     ".claude-plugin",
-    
+    "server.json",
     "install.sh",
     "README.md",
     "LICENSE"
-  ]
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "mcpName": "io.github.gabrielchaves6/cloudfact",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gabrielchaves6/cloudfact"
+  },
+  "homepage": "https://github.com/gabrielchaves6/cloudfact",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "cloudflare",
+    "deploy",
+    "static-site",
+    "tunnel",
+    "cloudflared",
+    "workers",
+    "claude-code",
+    "codex"
+  ],
+  "author": "Gabriel Chaves"
 }

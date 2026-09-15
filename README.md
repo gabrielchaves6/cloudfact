@@ -45,10 +45,10 @@ Depois do login o backend padrão vira `workers`; `--backend tunnel` continua di
 
 ## Backends
 
-| backend | conta? | URL | como |
-|---|---|---|---|
-| `tunnel` (padrão sem login) | não | `https://<aleatório>.trycloudflare.com` | servidor estático local + `cloudflared` quick tunnel, em processo destacado que sobrevive à sessão e religa se cair |
-| `workers` (padrão após login) | sim | `https://<nome>.<sub>.workers.dev` | Cloudflare Workers com assets estáticos, o sucessor do Pages (a Cloudflare não cria mais projetos Pages novos). `wrangler deploy --assets`, baixado via `npx` na primeira vez. Envia uma cópia sem dotfiles/symlinks/node_modules. `remove` apaga o worker |
+| backend                       | conta? | URL                                     | como                                                                                                                                                                                                                                                       |
+| ----------------------------- | ------ | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tunnel` (padrão sem login)   | não    | `https://<aleatório>.trycloudflare.com` | servidor estático local + `cloudflared` quick tunnel, em processo destacado que sobrevive à sessão e religa se cair                                                                                                                                        |
+| `workers` (padrão após login) | sim    | `https://<nome>.<sub>.workers.dev`      | Cloudflare Workers com assets estáticos, o sucessor do Pages (a Cloudflare não cria mais projetos Pages novos). `wrangler deploy --assets`, baixado via `npx` na primeira vez. Envia uma cópia sem dotfiles/symlinks/node_modules. `remove` apaga o worker |
 
 `--private` gera uma chave; a URL devolvida vem com `#key=…`. Sem o cookie, toda rota devolve só a página de gate, que troca o fragmento por um cookie HttpOnly em `POST /api/session`. Só no backend `tunnel` por enquanto.
 
@@ -88,7 +88,37 @@ Estado: `~/.cloudfact/deploys/<nome>/` (`state.json`, `host.log`, `tunnel.log`, 
 
 ## Desenvolvimento
 
-`npm run build` empacota `src/` em `dist/` (esbuild, sem dependências em runtime; `dist/` é versionado para o plugin funcionar direto do git). `npm test` faz o build, sobe o MCP e chama as tools.
+TypeScript, sem dependências em runtime além do SDK do MCP e zod (empacotados em `dist/`).
+
+```
+src/
+  bin.ts                 entrada do CLI            → dist/bin.js
+  server.ts              entrada do MCP (stdio)    → dist/server.js
+  index.ts               API pública (lib)         → dist/index.js + .d.ts
+  cloudfact.ts           casos de uso: deploy, stop, remove, status, doctor
+  config.ts  types.ts  logger.ts
+  mcp/
+    server.ts            createServer(): registra tools e prompt
+    define-tool.ts       defineTool() tipado com anotações (readOnlyHint, destructiveHint)
+    tools/               uma tool por arquivo
+  backends/
+    tunnel/              static-server.ts (servidor seguro) · host.ts (processo destacado → dist/host.js) · index.ts
+    workers/             wrangler deploy --assets
+  services/              state (disco, atômico) · cloudflared (busca/download) · wrangler · auth (token / device)
+tests/                   vitest: servidor estático, estado, MCP in-memory
+skills/cloudfact/        skill /cloudfact
+.claude-plugin/          manifesto do plugin e marketplace
+server.json              manifesto do registro oficial de MCP
+```
+
+```
+npm run check      # typecheck + lint + test + build (o que a CI roda)
+npm test           # vitest
+npm run build      # tsup → dist/ (versionado: o plugin funciona direto do git, sem npm install)
+npm run inspect    # MCP Inspector apontando para dist/server.js
+```
+
+`dist/` é commitado de propósito; a CI falha se ele estiver desatualizado em relação a `src/`.
 
 ## Roadmap
 
