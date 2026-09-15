@@ -18,6 +18,8 @@ export const WRANGLER_CONFIG = path.join(
 );
 /** Tunnel host process script. Sits next to the bundle in dist/; in dev point at it with CLOUDFACT_HOST_SCRIPT. */
 export const HOST_SCRIPT = process.env.CLOUDFACT_HOST_SCRIPT ?? path.join(here, 'host.js');
+/** The CLI bundle, spawned detached to refresh the catalog page after a deploy. */
+export const BIN_SCRIPT = process.env.CLOUDFACT_BIN_SCRIPT ?? path.join(here, 'bin.js');
 export const TOKEN_URL = 'https://dash.cloudflare.com/profile/api-tokens';
 
 function readVersion(): string {
@@ -43,6 +45,10 @@ export interface Config {
   /** Zero Trust team name / auth domain used for Cloudflare Access. */
   cloudflareTeam?: string;
   cloudflareTeamDomain?: string;
+  /** Name of the published catalog page, so deploys can keep it current. */
+  catalogDeploy?: string | null;
+  /** The "you can have an index of all this" hint is shown once, never again. */
+  catalogHintShown?: boolean;
 }
 
 export function readConfig(): Config {

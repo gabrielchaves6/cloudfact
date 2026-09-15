@@ -31,6 +31,8 @@ interface DeployState {
     local?: string | null;
     restarts?: number;
     urlAt?: string;
+    /** Public hostname of the tunnel that serves this deploy when a Worker fronts it. */
+    tunnelUrl?: string | null;
     stoppedAt?: string;
     targetPort?: number | null;
     ssh?: SshTarget | null;
@@ -114,6 +116,8 @@ interface CatalogEntry {
     modifiedAt: string | null;
     backend: Backend;
     status: DeployStatus;
+    /** Found running on this machine but never recorded by cloudfact (published by something else). */
+    untracked?: boolean;
 }
 interface CatalogResult {
     accountId: string;
@@ -153,6 +157,7 @@ declare const VERSION: string;
 declare function catalog(opts?: {
     project?: string;
     fetchImpl?: typeof fetch;
+    scanLocal?: boolean;
 }): Promise<CatalogResult>;
 /** Files an existing deploy under a project (or clears it with null), without redeploying. */
 declare function setProject(name: string, project: string | null, fetchImpl?: typeof fetch): Promise<CatalogEntry>;
@@ -192,6 +197,17 @@ declare function resolveBackend(choice: DeployOptions['backend']): Backend;
 declare function deploy(opts?: DeployOptions): Promise<DeployResult>;
 /** Publish an app that already listens on a port, here or on a machine reachable over SSH. Tunnel backend only. Private by default. */
 declare function expose(opts: ExposeOptions): Promise<DeployResult>;
+/**
+ * One-off nudge: once someone has a handful of deploys and no catalog page yet, it is worth telling them
+ * the page exists. Returns the line to print exactly once, then never again.
+ */
+declare function catalogHint(): string | null;
+/**
+ * Keeps a published catalog page current: it is a snapshot, so a new deploy would leave it stale.
+ * Runs detached so the deploy that triggered it returns immediately, and does nothing when no catalog
+ * page exists. `CLOUDFACT_NO_CATALOG_REFRESH` stops the refresh from refreshing itself.
+ */
+declare function refreshCatalogPage(justDeployed: string): Promise<boolean>;
 /**
  * Publishes the catalog itself: a page with one card per cloudfact in the account, grouped by project,
  * showing whether each is public, key-gated or behind sign-in, and static or a server app.
@@ -287,4 +303,4 @@ interface ToolDefinition<Schema extends ZodRawShape = ZodRawShape> {
 
 declare const tools: ToolDefinition<any>[];
 
-export { type Backend, type BackendChoice, type CatalogEntry, type CatalogResult, type Credentials, type DeployKind, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type ExposeOptions, type SshTarget, type StatusResult, type ToolDefinition, VERSION, type Visibility, catalog, createServer, deploy, doctor, expose, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, publishCatalog, readLogs, remove, resolveBackend, rotate, setProject, status, stop, stopAll, summarize, tools };
+export { type Backend, type BackendChoice, type CatalogEntry, type CatalogResult, type Credentials, type DeployKind, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type ExposeOptions, type SshTarget, type StatusResult, type ToolDefinition, VERSION, type Visibility, catalog, catalogHint, createServer, deploy, doctor, expose, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, publishCatalog, readLogs, refreshCatalogPage, remove, resolveBackend, rotate, setProject, status, stop, stopAll, summarize, tools };

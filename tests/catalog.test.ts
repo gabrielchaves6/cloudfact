@@ -128,3 +128,45 @@ describe('account catalog', () => {
     expect(html).not.toContain('<iframe src="https://painel.example-sub.workers.dev"');
   });
 });
+
+describe('pages served from this machine that cloudfact never recorded', () => {
+  let home: string;
+  beforeAll(() => {
+    home = tmpDir();
+    process.env.CLOUDFACT_HOME = home;
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    process.env.CLOUDFLARE_ACCOUNT_ID = 'acc123';
+  });
+  afterAll(() => {
+    vi.unstubAllGlobals();
+    delete process.env.CLOUDFLARE_API_TOKEN;
+    delete process.env.CLOUDFLARE_ACCOUNT_ID;
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it('lists a live quick tunnel found on the metrics port, named after its page title', async () => {
+    const account = fakeAccount().fetchImpl;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url === 'http://127.0.0.1:20243/quicktunnel')
+          return new Response(JSON.stringify({ hostname: 'jill-goes-souls-ruth.trycloudflare.com' }));
+        if (url.startsWith('http://127.0.0.1:')) throw new Error('closed');
+        if (url === 'https://jill-goes-souls-ruth.trycloudflare.com')
+          return new Response('<html><head><title>Tutorial: Plano de Receita</title></head><body>hi</body></html>');
+        return account(input, init);
+      }),
+    );
+    const { catalog } = await import('../src/cloudfact.js');
+    const found = (await catalog()).projects.flatMap((p) => p.deploys).find((d) => d.untracked);
+    expect(found).toMatchObject({
+      name: 'tutorial-plano-de-receita',
+      url: 'https://jill-goes-souls-ruth.trycloudflare.com',
+      untracked: true,
+      inAccount: false,
+      visibility: 'public',
+      backend: 'tunnel',
+    });
+  });
+});

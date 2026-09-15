@@ -85,6 +85,8 @@ export async function main(argv: string[]): Promise<number> {
         console.log(`URL: ${r.privateUrl ?? r.url}`);
         if (r.access) console.log(`access: sign-in required (${r.access.emails.join(', ')}) via ${r.access.teamDomain}`);
         if (r.local) console.log(`local: ${r.local}`);
+        const hint = cf.catalogHint();
+        if (hint) console.log(hint);
       }
       return 0;
     }
@@ -111,6 +113,8 @@ export async function main(argv: string[]): Promise<number> {
           `${r.reused ? 'already live' : 'published'}: ${r.name} → ${r.ssh ? `${r.ssh.destination}:` : 'localhost:'}${r.targetPort}`,
         );
         console.log(`URL: ${r.privateUrl ?? r.url}`);
+        const hint = cf.catalogHint();
+        if (hint) console.log(hint);
       }
       return 0;
     }
@@ -138,7 +142,13 @@ export async function main(argv: string[]): Promise<number> {
         for (const group of c.projects) {
           console.log(`\n${group.project ?? '(no project)'}`);
           for (const d of group.deploys) {
-            const where = d.inAccount ? (d.local ? '' : ' [not on this machine]') : ' [local tunnel]';
+            const where = d.untracked
+              ? ' [not managed by cloudfact]'
+              : d.inAccount
+                ? d.local
+                  ? ''
+                  : ' [not on this machine]'
+                : ' [local tunnel]';
             const who = d.access ? ` sign-in: ${d.access.emails.join(', ') || 'Cloudflare Access'}` : '';
             console.log(`  ${d.name.padEnd(24)} ${(d.url ?? '-').padEnd(46)}${where}${who}`);
           }

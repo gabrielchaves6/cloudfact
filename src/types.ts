@@ -30,6 +30,8 @@ export interface DeployState {
   local?: string | null;
   restarts?: number;
   urlAt?: string;
+  /** Public hostname of the tunnel that serves this deploy when a Worker fronts it. */
+  tunnelUrl?: string | null;
   stoppedAt?: string;
   // proxy (expose)
   targetPort?: number | null;
@@ -112,6 +114,8 @@ export interface CatalogEntry {
   modifiedAt: string | null;
   backend: Backend;
   status: DeployStatus;
+  /** Found running on this machine but never recorded by cloudfact (published by something else). */
+  untracked?: boolean;
 }
 
 export interface CatalogResult {

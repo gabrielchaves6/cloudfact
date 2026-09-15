@@ -131,7 +131,11 @@ export function galleryHtml(c: CatalogResult, opts: { title?: string; snapshots?
         : `<div class="fallback"><div class="mono">${esc(d.name.slice(0, 2))}</div><div class="why">${
             d.visibility === 'access' ? 'sign-in required' : d.visibility === 'private' ? 'private link' : 'not reachable from here'
           }</div></div>`;
-    const badge = d.inAccount ? '' : '<span class="tag">local tunnel</span>';
+    const badge = d.untracked
+      ? '<span class="tag">not managed by cloudfact</span>'
+      : d.inAccount
+        ? ''
+        : '<span class="tag">local tunnel</span>';
     const search = [d.name, d.project ?? '', d.url ?? '', VIS_LABEL[d.visibility], KIND_LABEL[d.kind]].join(' ').toLowerCase();
     return `<a class="card" href="${where || '#'}" target="_blank" rel="noopener"
   data-project="${esc(d.project ?? '')}" data-vis="${esc(d.visibility)}" data-kind="${esc(d.kind)}" data-search="${esc(search)}">

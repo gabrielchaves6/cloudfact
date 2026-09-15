@@ -58,7 +58,7 @@ function writeConfig(cfg) {
   fs.mkdirSync(HOME, { recursive: true, mode: 448 });
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2) + "\n", { mode: 384 });
 }
-var here, HOME, DEPLOYS_DIR, BIN_DIR, CONFIG_FILE, WRANGLER_CONFIG, HOST_SCRIPT, TOKEN_URL, VERSION;
+var here, HOME, DEPLOYS_DIR, BIN_DIR, CONFIG_FILE, WRANGLER_CONFIG, HOST_SCRIPT, BIN_SCRIPT, TOKEN_URL, VERSION;
 var init_config = __esm({
   "src/config.ts"() {
     "use strict";
@@ -74,6 +74,7 @@ var init_config = __esm({
       "default.toml"
     );
     HOST_SCRIPT = process.env.CLOUDFACT_HOST_SCRIPT ?? path.join(here, "host.js");
+    BIN_SCRIPT = process.env.CLOUDFACT_BIN_SCRIPT ?? path.join(here, "bin.js");
     TOKEN_URL = "https://dash.cloudflare.com/profile/api-tokens";
     VERSION = readVersion();
   }
@@ -672,6 +673,55 @@ var init_access = __esm({
   }
 });
 
+// src/services/local-tunnels.ts
+async function quickTunnelHostname(port) {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/quicktunnel`, { signal: AbortSignal.timeout(PROBE_TIMEOUT) });
+    if (!res.ok) return null;
+    const body = await res.json();
+    return body.hostname?.endsWith(".trycloudflare.com") ? body.hostname : null;
+  } catch {
+    return null;
+  }
+}
+async function describe(url) {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(PAGE_TIMEOUT), redirect: "follow" });
+    const html = await res.text();
+    const gated = html.includes("Private page: open it through the full link");
+    return { title: gated ? null : titleOf(html), gated };
+  } catch {
+    return { title: null, gated: false };
+  }
+}
+async function discoverTunnels() {
+  const ports = Array.from({ length: METRICS_PORTS }, (_, i) => FIRST_METRICS_PORT + i);
+  const hostnames = (await Promise.all(ports.map(quickTunnelHostname))).filter((h) => Boolean(h));
+  const unique = [...new Set(hostnames)];
+  return Promise.all(
+    unique.map(async (hostname2) => {
+      const url = `https://${hostname2}`;
+      const { title, gated } = await describe(url);
+      return { hostname: hostname2, url, title, gated };
+    })
+  );
+}
+function tunnelName(t) {
+  const fromTitle = t.title?.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32);
+  return fromTitle || t.hostname.split(".")[0].split("-").slice(0, 2).join("-");
+}
+var FIRST_METRICS_PORT, METRICS_PORTS, PROBE_TIMEOUT, PAGE_TIMEOUT, titleOf;
+var init_local_tunnels = __esm({
+  "src/services/local-tunnels.ts"() {
+    "use strict";
+    FIRST_METRICS_PORT = 20241;
+    METRICS_PORTS = 24;
+    PROBE_TIMEOUT = 400;
+    PAGE_TIMEOUT = 4e3;
+    titleOf = (html) => /<title[^>]*>([^<]{1,80})/i.exec(html)?.[1]?.trim() || null;
+  }
+});
+
 // src/services/catalog.ts
 function projectTag(project) {
   return PROJECT_TAG + slugProject(project);
@@ -684,6 +734,7 @@ function tagsFor(opts = {}) {
   if (opts.project) tags.push(projectTag(opts.project));
   if (opts.visibility) tags.push(VIS_TAG + opts.visibility);
   if (opts.kind) tags.push(KIND_TAG + opts.kind);
+  if (opts.catalog) tags.push(CATALOG_TAG);
   return tags;
 }
 function projectFromTags(tags) {
@@ -787,6 +838,33 @@ async function catalog(opts = {}) {
       status: s.status
     });
   }
+  if (opts.scanLocal !== false) {
+    const known = /* @__PURE__ */ new Set();
+    for (const e of entries) if (e.url) known.add(e.url);
+    for (const s of local.values()) {
+      if (s.url) known.add(s.url);
+      if (s.tunnelUrl) known.add(s.tunnelUrl);
+    }
+    for (const t of await discoverTunnels()) {
+      if ([...known].some((u) => u.startsWith(t.url))) continue;
+      entries.push({
+        name: tunnelName(t),
+        project: null,
+        url: t.url,
+        inAccount: false,
+        local: true,
+        access: null,
+        visibility: t.gated ? "private" : "public",
+        kind: "app",
+        hasAssets: false,
+        createdAt: null,
+        modifiedAt: null,
+        backend: "tunnel",
+        status: "running",
+        untracked: true
+      });
+    }
+  }
   const wanted = opts.project ? slugProject(opts.project) : null;
   const kept = wanted ? entries.filter((e) => (e.project ?? "") === wanted) : entries;
   kept.sort((a, b2) => (b2.modifiedAt ?? "").localeCompare(a.modifiedAt ?? "") || a.name.localeCompare(b2.name));
@@ -797,6 +875,20 @@ async function catalog(opts = {}) {
     subdomain,
     projects: names.map((p) => ({ project: p || null, deploys: kept.filter((e) => (e.project ?? "") === p) }))
   };
+}
+async function publishedCatalogName(fetchImpl) {
+  const cfg = readConfig();
+  if (cfg.catalogDeploy) return cfg.catalogDeploy;
+  const b = bearer(cfg);
+  if (!b?.accountId) return null;
+  try {
+    const scripts = await api(b.token, "GET", `/accounts/${b.accountId}/workers/scripts`, void 0, fetchImpl);
+    const found = scripts.find((s) => (s.tags ?? []).includes(CATALOG_TAG))?.id ?? null;
+    if (found) writeConfig({ ...readConfig(), catalogDeploy: found });
+    return found;
+  } catch {
+    return null;
+  }
 }
 async function accountEmail(fetchImpl) {
   const b = bearer();
@@ -823,17 +915,19 @@ async function setProject(name, project, fetchImpl) {
   if (!found) throw new Error(`deploy "${name}" is not in the account catalog`);
   return found;
 }
-var API2, TAG, PROJECT_TAG, VIS_TAG, KIND_TAG, tagValue;
+var API2, TAG, PROJECT_TAG, VIS_TAG, CATALOG_TAG, KIND_TAG, tagValue;
 var init_catalog = __esm({
   "src/services/catalog.ts"() {
     "use strict";
     init_config();
     init_wrangler();
     init_state();
+    init_local_tunnels();
     API2 = "https://api.cloudflare.com/client/v4";
     TAG = "cloudfact";
     PROJECT_TAG = "cloudfact:project:";
     VIS_TAG = "cloudfact:vis:";
+    CATALOG_TAG = "cloudfact:catalog";
     KIND_TAG = "cloudfact:kind:";
     tagValue = (tags, prefix) => (tags ?? []).find((t) => t.startsWith(prefix))?.slice(prefix.length) || null;
   }
@@ -1057,7 +1151,7 @@ function galleryHtml(c, opts = {}) {
     const where = d.url ? esc(d.url) : "";
     const snap = opts.snapshots?.[d.name];
     const preview = snap ? `<iframe srcdoc="${esc(snap)}" loading="lazy" tabindex="-1" sandbox="" title=""></iframe>` : d.url && d.visibility === "public" ? `<iframe src="${where}" loading="lazy" tabindex="-1" sandbox="allow-scripts" title=""></iframe>` : `<div class="fallback"><div class="mono">${esc(d.name.slice(0, 2))}</div><div class="why">${d.visibility === "access" ? "sign-in required" : d.visibility === "private" ? "private link" : "not reachable from here"}</div></div>`;
-    const badge = d.inAccount ? "" : '<span class="tag">local tunnel</span>';
+    const badge = d.untracked ? '<span class="tag">not managed by cloudfact</span>' : d.inAccount ? "" : '<span class="tag">local tunnel</span>';
     const search = [d.name, d.project ?? "", d.url ?? "", VIS_LABEL[d.visibility], KIND_LABEL[d.kind]].join(" ").toLowerCase();
     return `<a class="card" href="${where || "#"}" target="_blank" rel="noopener"
   data-project="${esc(d.project ?? "")}" data-vis="${esc(d.visibility)}" data-kind="${esc(d.kind)}" data-search="${esc(search)}">
@@ -1446,7 +1540,7 @@ var init_auth = __esm({
 // src/cloudfact.ts
 import fs8 from "fs";
 import path8 from "path";
-import { spawnSync as spawnSync3 } from "child_process";
+import { spawn as spawn3, spawnSync as spawnSync3 } from "child_process";
 function resolveTarget(target) {
   const abs = path8.resolve(target ?? ".");
   let stat;
@@ -1476,29 +1570,28 @@ async function deploy(opts = {}) {
       "--access (Cloudflare Access sign-in) works on the workers backend; sign in with `cloudfact login --token` and use --backend workers"
     );
   }
-  if (backend === "workers") {
-    return deployWorkers({
-      ...common,
-      key: priv ? newKey() : null,
-      keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
-      access: opts.access ?? null,
-      project: opts.project ?? null
-    });
-  }
-  return deployTunnel({
+  const result = backend === "workers" ? await deployWorkers({
+    ...common,
+    key: priv ? newKey() : null,
+    keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
+    access: opts.access ?? null,
+    project: opts.project ?? null
+  }) : await deployTunnel({
     ...common,
     keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
     project: opts.project ?? null,
     restart: Boolean(opts.restart),
     timeoutMs: opts.timeoutMs ?? 45e3
   });
+  await refreshCatalogPage(name);
+  return result;
 }
 async function expose(opts) {
   if (!Number.isInteger(opts.port) || opts.port < 1 || opts.port > 65535) throw new Error(`invalid port: ${String(opts.port)}`);
   const ssh = opts.ssh?.destination ? { destination: opts.ssh.destination, port: opts.ssh.port, identity: opts.ssh.identity, strictHostKey: opts.ssh.strictHostKey } : null;
   const priv = !opts.public;
   const name = slug(opts.name ?? (ssh ? `${ssh.destination.split("@").pop()}-${opts.port}` : `port-${opts.port}`));
-  return deployTunnel({
+  const exposed = await deployTunnel({
     name,
     mode: "proxy",
     root: null,
@@ -1511,6 +1604,36 @@ async function expose(opts) {
     restart: Boolean(opts.restart),
     timeoutMs: opts.timeoutMs ?? 45e3
   });
+  await refreshCatalogPage(name);
+  return exposed;
+}
+function catalogHint() {
+  const cfg = readConfig();
+  if (cfg.catalogHintShown || cfg.catalogDeploy) return null;
+  if (listDeploys().length < 3) return null;
+  writeConfig({ ...cfg, catalogHintShown: true });
+  return "tip: `cloudfact catalog --publish` turns everything you host here into one page, behind a sign-in.";
+}
+async function refreshCatalogPage(justDeployed) {
+  if (process.env.CLOUDFACT_NO_CATALOG_REFRESH === "1") return false;
+  let name;
+  try {
+    name = await publishedCatalogName();
+  } catch {
+    return false;
+  }
+  if (!name || name === justDeployed) return false;
+  try {
+    const child = spawn3(process.execPath, [BIN_SCRIPT, "catalog", "--publish", "--name", name, "--json"], {
+      detached: true,
+      stdio: "ignore",
+      env: { ...process.env, CLOUDFACT_NO_CATALOG_REFRESH: "1" }
+    });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
 }
 async function publishCatalog(opts = {}) {
   const c = await catalog();
@@ -1523,14 +1646,24 @@ async function publishCatalog(opts = {}) {
   const dir = path8.join(HOME, "catalog");
   fs8.mkdirSync(dir, { recursive: true, mode: 448 });
   fs8.writeFileSync(path8.join(dir, "index.html"), galleryHtml(c, { title: opts.title, snapshots: shots }));
-  return deploy({
+  const name = opts.name ?? readConfig().catalogDeploy ?? "cloudfacts";
+  const result = await deploy({
     path: dir,
-    name: opts.name ?? "cloudfacts",
+    name,
     project: opts.project ?? "cloudfact",
     access: access ? [access].flat() : void 0,
     public: opts.public,
     backend: "workers"
   });
+  writeConfig({ ...readConfig(), catalogDeploy: result.name });
+  await tagWorker(result.name, {
+    project: opts.project ?? "cloudfact",
+    visibility: result.access ? "access" : result.privateUrl ? "private" : "public",
+    kind: "static",
+    catalog: true
+  }).catch(() => {
+  });
+  return result;
 }
 async function rotate(name, opts = {}) {
   const s = effectiveState(name);
@@ -24193,6 +24326,8 @@ ${HELP}`);
         console.log(`URL: ${r.privateUrl ?? r.url}`);
         if (r.access) console.log(`access: sign-in required (${r.access.emails.join(", ")}) via ${r.access.teamDomain}`);
         if (r.local) console.log(`local: ${r.local}`);
+        const hint = catalogHint();
+        if (hint) console.log(hint);
       }
       return 0;
     }
@@ -24217,6 +24352,8 @@ ${HELP}`);
           `${r.reused ? "already live" : "published"}: ${r.name} \u2192 ${r.ssh ? `${r.ssh.destination}:` : "localhost:"}${r.targetPort}`
         );
         console.log(`URL: ${r.privateUrl ?? r.url}`);
+        const hint = catalogHint();
+        if (hint) console.log(hint);
       }
       return 0;
     }
@@ -24245,7 +24382,7 @@ ${HELP}`);
           console.log(`
 ${group.project ?? "(no project)"}`);
           for (const d of group.deploys) {
-            const where = d.inAccount ? d.local ? "" : " [not on this machine]" : " [local tunnel]";
+            const where = d.untracked ? " [not managed by cloudfact]" : d.inAccount ? d.local ? "" : " [not on this machine]" : " [local tunnel]";
             const who = d.access ? ` sign-in: ${d.access.emails.join(", ") || "Cloudflare Access"}` : "";
             console.log(`  ${d.name.padEnd(24)} ${(d.url ?? "-").padEnd(46)}${where}${who}`);
           }

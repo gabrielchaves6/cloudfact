@@ -7,15 +7,18 @@
  * Quick tunnels have no account-side resource: they exist only while the machine that started them runs,
  * so they can only ever come from local state (`local: true`, `inAccount: false`).
  */
-import { readConfig, type Config } from '../config.js';
+import { readConfig, writeConfig, type Config } from '../config.js';
 import { credentials, oauthToken } from './wrangler.js';
 import { listDeploys } from './state.js';
+import { discoverTunnels, tunnelName } from './local-tunnels.js';
 import type { CatalogEntry, CatalogResult, DeployKind, DeployState, Visibility } from '../types.js';
 
 const API = 'https://api.cloudflare.com/client/v4';
 export const TAG = 'cloudfact';
 export const PROJECT_TAG = 'cloudfact:project:';
 const VIS_TAG = 'cloudfact:vis:';
+/** The published catalog page marks itself, so any machine can find and refresh it. */
+export const CATALOG_TAG = 'cloudfact:catalog';
 const KIND_TAG = 'cloudfact:kind:';
 
 export function projectTag(project: string): string {
@@ -41,11 +44,14 @@ export function slugProject(input: string): string {
  * deploy is (static files vs an app served through a proxy) and who can open it (open to anyone, a
  * key-gated link, or Cloudflare Access sign-in).
  */
-export function tagsFor(opts: { project?: string | null; visibility?: Visibility | null; kind?: DeployKind | null } = {}): string[] {
+export function tagsFor(
+  opts: { project?: string | null; visibility?: Visibility | null; kind?: DeployKind | null; catalog?: boolean } = {},
+): string[] {
   const tags = [TAG];
   if (opts.project) tags.push(projectTag(opts.project));
   if (opts.visibility) tags.push(VIS_TAG + opts.visibility);
   if (opts.kind) tags.push(KIND_TAG + opts.kind);
+  if (opts.catalog) tags.push(CATALOG_TAG);
   return tags;
 }
 
@@ -67,6 +73,14 @@ export function bearer(cfg: Config = readConfig()): { token: string; accountId: 
   const oauth = oauthToken();
   if (oauth) return { token: oauth, accountId: creds?.accountId ?? cfg.cloudflareAccountId ?? null };
   return null;
+}
+
+interface ScriptRow {
+  id: string;
+  tags?: string[];
+  created_on?: string;
+  modified_on?: string;
+  has_assets?: boolean;
 }
 
 interface Envelope<T> {
@@ -97,7 +111,7 @@ async function api<T>(token: string, method: string, path: string, body?: unknow
 /** Marks a worker as cloudfact's, with its project, visibility and kind. Idempotent; a deploy resets tags. */
 export async function tagWorker(
   name: string,
-  opts: { project?: string | null; visibility?: Visibility | null; kind?: DeployKind | null } = {},
+  opts: { project?: string | null; visibility?: Visibility | null; kind?: DeployKind | null; catalog?: boolean } = {},
   fetchImpl?: typeof fetch,
 ): Promise<void> {
   const b = bearer();
@@ -114,13 +128,6 @@ export function kindOf(s: DeployState): DeployKind {
   return s.mode === 'proxy' ? 'app' : 'static';
 }
 
-interface ScriptRow {
-  id: string;
-  tags?: string[];
-  created_on?: string;
-  modified_on?: string;
-  has_assets?: boolean;
-}
 interface AccessAppRow {
   id: string;
   name?: string;
@@ -132,7 +139,7 @@ interface AccessAppRow {
  * The account's cloudfact deploys, grouped by project, merged with what this machine knows.
  * Three API calls: scripts, the workers.dev subdomain and (best effort) the Access applications.
  */
-export async function catalog(opts: { project?: string; fetchImpl?: typeof fetch } = {}): Promise<CatalogResult> {
+export async function catalog(opts: { project?: string; fetchImpl?: typeof fetch; scanLocal?: boolean } = {}): Promise<CatalogResult> {
   const cfg = readConfig();
   const b = bearer(cfg);
   if (!b) throw new Error('not signed in to Cloudflare: run `cloudfact login --device` or `cloudfact login --token <token>`');
@@ -201,6 +208,37 @@ export async function catalog(opts: { project?: string; fetchImpl?: typeof fetch
     });
   }
 
+  // pages served from this machine through a quick tunnel that cloudfact never recorded (published
+  // before cloudfact, or by another tool) would otherwise be invisible: the account cannot see them
+  if (opts.scanLocal !== false) {
+    // a tunnel can also be the private origin behind an Access proxy: that one belongs to its deploy
+    const known = new Set<string>();
+    for (const e of entries) if (e.url) known.add(e.url);
+    for (const s of local.values()) {
+      if (s.url) known.add(s.url);
+      if (s.tunnelUrl) known.add(s.tunnelUrl);
+    }
+    for (const t of await discoverTunnels()) {
+      if ([...known].some((u) => u.startsWith(t.url))) continue;
+      entries.push({
+        name: tunnelName(t),
+        project: null,
+        url: t.url,
+        inAccount: false,
+        local: true,
+        access: null,
+        visibility: t.gated ? 'private' : 'public',
+        kind: 'app',
+        hasAssets: false,
+        createdAt: null,
+        modifiedAt: null,
+        backend: 'tunnel',
+        status: 'running',
+        untracked: true,
+      });
+    }
+  }
+
   const wanted = opts.project ? slugProject(opts.project) : null;
   const kept = wanted ? entries.filter((e) => (e.project ?? '') === wanted) : entries;
   kept.sort((a, b2) => (b2.modifiedAt ?? '').localeCompare(a.modifiedAt ?? '') || a.name.localeCompare(b2.name));
@@ -211,6 +249,25 @@ export async function catalog(opts: { project?: string; fetchImpl?: typeof fetch
     subdomain,
     projects: names.map((p) => ({ project: p || null, deploys: kept.filter((e) => (e.project ?? '') === p) })),
   };
+}
+
+/**
+ * Name of the catalog page already published in this account, or null. Read from local config first
+ * (no network) and confirmed against the account, so it also works from a machine that never published it.
+ */
+export async function publishedCatalogName(fetchImpl?: typeof fetch): Promise<string | null> {
+  const cfg = readConfig();
+  if (cfg.catalogDeploy) return cfg.catalogDeploy;
+  const b = bearer(cfg);
+  if (!b?.accountId) return null;
+  try {
+    const scripts = await api<ScriptRow[]>(b.token, 'GET', `/accounts/${b.accountId}/workers/scripts`, undefined, fetchImpl);
+    const found = scripts.find((s) => (s.tags ?? []).includes(CATALOG_TAG))?.id ?? null;
+    if (found) writeConfig({ ...readConfig(), catalogDeploy: found });
+    return found;
+  } catch {
+    return null;
+  }
 }
 
 /** Email of whoever is signed in, used to put Access in front of the catalog page without asking. */

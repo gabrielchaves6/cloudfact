@@ -1,18 +1,18 @@
 /** cloudfact public API: what the MCP server and the CLI expose. */
 import fs from 'node:fs';
 import path from 'node:path';
-import { HOME, VERSION, readConfig } from './config.js';
+import { BIN_SCRIPT, HOME, VERSION, readConfig, writeConfig } from './config.js';
 import { deployTunnel, newKey, stopTunnel } from './backends/tunnel/index.js';
 import { rotateWorkersKey } from './backends/workers/index.js';
 import { expiryFrom } from './services/duration.js';
-import { accountEmail, catalog as readCatalog } from './services/catalog.js';
+import { accountEmail, catalog as readCatalog, publishedCatalogName, tagWorker } from './services/catalog.js';
 import { galleryHtml } from './services/gallery.js';
 import { snapshots } from './services/snapshot.js';
 import { deleteWorker, deployWorkers } from './backends/workers/index.js';
 import { cloudflaredVersion, findCloudflared } from './services/cloudflared.js';
 import { effectiveState, isLive, listDeploys, readState, removeDeployDir, slug, summarize, writeState } from './services/state.js';
 import { credentials } from './services/wrangler.js';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const hasSsh = (): boolean => spawnSync('sh', ['-c', 'command -v ssh'], { encoding: 'utf8' }).status === 0;
 import type { Backend, DeployMode, DeployOptions, DeployResult, DeploySummary, ExposeOptions } from './types.js';
@@ -62,22 +62,24 @@ export async function deploy(opts: DeployOptions = {}): Promise<DeployResult> {
       '--access (Cloudflare Access sign-in) works on the workers backend; sign in with `cloudfact login --token` and use --backend workers',
     );
   }
-  if (backend === 'workers') {
-    return deployWorkers({
-      ...common,
-      key: priv ? newKey() : null,
-      keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
-      access: opts.access ?? null,
-      project: opts.project ?? null,
-    });
-  }
-  return deployTunnel({
-    ...common,
-    keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
-    project: opts.project ?? null,
-    restart: Boolean(opts.restart),
-    timeoutMs: opts.timeoutMs ?? 45_000,
-  });
+  const result =
+    backend === 'workers'
+      ? await deployWorkers({
+          ...common,
+          key: priv ? newKey() : null,
+          keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
+          access: opts.access ?? null,
+          project: opts.project ?? null,
+        })
+      : await deployTunnel({
+          ...common,
+          keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
+          project: opts.project ?? null,
+          restart: Boolean(opts.restart),
+          timeoutMs: opts.timeoutMs ?? 45_000,
+        });
+  await refreshCatalogPage(name);
+  return result;
 }
 
 /** Publish an app that already listens on a port, here or on a machine reachable over SSH. Tunnel backend only. Private by default. */
@@ -88,7 +90,7 @@ export async function expose(opts: ExposeOptions): Promise<DeployResult> {
     : null;
   const priv = !opts.public;
   const name = slug(opts.name ?? (ssh ? `${ssh.destination.split('@').pop()}-${opts.port}` : `port-${opts.port}`));
-  return deployTunnel({
+  const exposed = await deployTunnel({
     name,
     mode: 'proxy',
     root: null,
@@ -101,6 +103,47 @@ export async function expose(opts: ExposeOptions): Promise<DeployResult> {
     restart: Boolean(opts.restart),
     timeoutMs: opts.timeoutMs ?? 45_000,
   });
+  await refreshCatalogPage(name);
+  return exposed;
+}
+
+/**
+ * One-off nudge: once someone has a handful of deploys and no catalog page yet, it is worth telling them
+ * the page exists. Returns the line to print exactly once, then never again.
+ */
+export function catalogHint(): string | null {
+  const cfg = readConfig();
+  if (cfg.catalogHintShown || cfg.catalogDeploy) return null;
+  if (listDeploys().length < 3) return null;
+  writeConfig({ ...cfg, catalogHintShown: true });
+  return 'tip: `cloudfact catalog --publish` turns everything you host here into one page, behind a sign-in.';
+}
+
+/**
+ * Keeps a published catalog page current: it is a snapshot, so a new deploy would leave it stale.
+ * Runs detached so the deploy that triggered it returns immediately, and does nothing when no catalog
+ * page exists. `CLOUDFACT_NO_CATALOG_REFRESH` stops the refresh from refreshing itself.
+ */
+export async function refreshCatalogPage(justDeployed: string): Promise<boolean> {
+  if (process.env.CLOUDFACT_NO_CATALOG_REFRESH === '1') return false;
+  let name: string | null;
+  try {
+    name = await publishedCatalogName();
+  } catch {
+    return false;
+  }
+  if (!name || name === justDeployed) return false;
+  try {
+    const child = spawn(process.execPath, [BIN_SCRIPT, 'catalog', '--publish', '--name', name, '--json'], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env, CLOUDFACT_NO_CATALOG_REFRESH: '1' },
+    });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -124,14 +167,24 @@ export async function publishCatalog(
   const dir = path.join(HOME, 'catalog');
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   fs.writeFileSync(path.join(dir, 'index.html'), galleryHtml(c, { title: opts.title, snapshots: shots }));
-  return deploy({
+  const name = opts.name ?? readConfig().catalogDeploy ?? 'cloudfacts';
+  const result = await deploy({
     path: dir,
-    name: opts.name ?? 'cloudfacts',
+    name,
     project: opts.project ?? 'cloudfact',
     access: access ? [access].flat() : undefined,
     public: opts.public,
     backend: 'workers',
   });
+  writeConfig({ ...readConfig(), catalogDeploy: result.name });
+  // marks the page so any machine can find it later and keep it current
+  await tagWorker(result.name, {
+    project: opts.project ?? 'cloudfact',
+    visibility: result.access ? 'access' : result.privateUrl ? 'private' : 'public',
+    kind: 'static',
+    catalog: true,
+  }).catch(() => {});
+  return result;
 }
 
 /**

@@ -23,6 +23,7 @@ var WRANGLER_CONFIG = path.join(
   "default.toml"
 );
 var HOST_SCRIPT = process.env.CLOUDFACT_HOST_SCRIPT ?? path.join(here, "host.js");
+var BIN_SCRIPT = process.env.CLOUDFACT_BIN_SCRIPT ?? path.join(here, "bin.js");
 function readVersion() {
   for (const candidate of [path.join(here, "..", "package.json"), path.join(here, "..", "..", "package.json")]) {
     try {

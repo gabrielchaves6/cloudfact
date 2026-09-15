@@ -104,13 +104,15 @@ cloudfact deploy ./painel --project migracao        # file it under a project
 cloudfact catalog                                   # everything in the account, grouped by project
 cloudfact catalog --project migracao --json         # one project, machine readable
 cloudfact project painel financeiro                 # move it, no redeploy
-cloudfact catalog --publish                         # the catalog itself as a browsable page
+cloudfact catalog --publish                         # publish the page; later deploys refresh it
 ```
 
 Each entry says what the deploy is and who can open it: **Public**, **Private link** (key-gated) or
 **Sign-in** (Cloudflare Access), and **Static** (files served by Cloudflare) or **Server app** (an app
-with its own server behind the proxy). Quick tunnels have no account-side resource, so they show up only
-while the machine that started them still has the record, flagged `local tunnel`. `--publish` deploys the
+with its own server behind the proxy). Quick tunnels have no account-side resource, so they are found on the
+machine itself: cloudfact asks the running `cloudflared` processes for their public hostname, which also
+surfaces pages published by something else entirely (flagged `not managed by cloudfact`) and pages whose
+record this machine still holds (`local tunnel`). `--publish` deploys the
 catalog as a page with a card per deploy, search, a list view and a filter per project. Each card shows a
 real thumbnail, captured when the catalog is published from whatever this machine can already read: the
 published folder, the app's own port, or the URL with its private key. Thumbnails render with scripts off
