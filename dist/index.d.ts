@@ -116,7 +116,10 @@ interface CatalogEntry {
     modifiedAt: string | null;
     backend: Backend;
     status: DeployStatus;
-    /** Found running on this machine but never recorded by cloudfact (published by something else). */
+    /**
+     * Live on this machine but with no local record: published by an older cloudfact whose state is gone,
+     * from another folder or home, or by another tool entirely. The page works; cloudfact cannot manage it.
+     */
     untracked?: boolean;
 }
 interface CatalogResult {

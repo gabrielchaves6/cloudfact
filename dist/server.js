@@ -22566,7 +22566,7 @@ function galleryHtml(c, opts = {}) {
     const where = d.url ? esc2(d.url) : "";
     const snap = opts.snapshots?.[d.name];
     const preview = snap ? `<iframe srcdoc="${esc2(snap)}" loading="lazy" tabindex="-1" sandbox="" title=""></iframe>` : d.url && d.visibility === "public" ? `<iframe src="${where}" loading="lazy" tabindex="-1" sandbox="allow-scripts" title=""></iframe>` : `<div class="fallback"><div class="mono">${esc2(d.name.slice(0, 2))}</div><div class="why">${d.visibility === "access" ? "sign-in required" : d.visibility === "private" ? "private link" : "not reachable from here"}</div></div>`;
-    const badge = d.untracked ? '<span class="tag">not managed by cloudfact</span>' : d.inAccount ? "" : '<span class="tag">local tunnel</span>';
+    const badge = d.untracked ? '<span class="tag">no local record</span>' : d.inAccount ? "" : '<span class="tag">local tunnel</span>';
     const search = [d.name, d.project ?? "", d.url ?? "", VIS_LABEL[d.visibility], KIND_LABEL[d.kind]].join(" ").toLowerCase();
     return `<a class="card" href="${where || "#"}" target="_blank" rel="noopener"
   data-project="${esc2(d.project ?? "")}" data-vis="${esc2(d.visibility)}" data-kind="${esc2(d.kind)}" data-search="${esc2(search)}">

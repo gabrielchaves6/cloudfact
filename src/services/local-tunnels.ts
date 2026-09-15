@@ -1,6 +1,7 @@
 /**
  * Quick tunnels leave nothing in the Cloudflare account, so the catalog would miss any page that is
- * served from this machine — including pages published before cloudfact existed, or by another tool.
+ * served from this machine: one published by an older cloudfact whose local record is gone, one started
+ * from another folder or home directory, or one published by another tool entirely.
  * cloudflared answers `/quicktunnel` on its metrics server (ports 20241+ by default), which gives the
  * public hostname of every tunnel running here, whoever started it.
  */

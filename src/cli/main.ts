@@ -142,13 +142,7 @@ export async function main(argv: string[]): Promise<number> {
         for (const group of c.projects) {
           console.log(`\n${group.project ?? '(no project)'}`);
           for (const d of group.deploys) {
-            const where = d.untracked
-              ? ' [not managed by cloudfact]'
-              : d.inAccount
-                ? d.local
-                  ? ''
-                  : ' [not on this machine]'
-                : ' [local tunnel]';
+            const where = d.untracked ? ' [no local record]' : d.inAccount ? (d.local ? '' : ' [not on this machine]') : ' [local tunnel]';
             const who = d.access ? ` sign-in: ${d.access.emails.join(', ') || 'Cloudflare Access'}` : '';
             console.log(`  ${d.name.padEnd(24)} ${(d.url ?? '-').padEnd(46)}${where}${who}`);
           }
