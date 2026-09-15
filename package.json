@@ -1,6 +1,6 @@
 {
   "name": "cloudfact",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Publish a folder or HTML file from your machine to a public Cloudflare URL with one command. CLI + MCP server + /cloudfact skill.",
   "type": "module",
   "bin": {
@@ -18,7 +18,8 @@
     "inspect": "npx @modelcontextprotocol/inspector node dist/server.js",
     "prepack": "npm run build",
     "docs": "node scripts/generate-docs.js",
-    "verify": "node scripts/verify-versions.js"
+    "verify": "node scripts/verify-versions.js",
+    "bump": "node scripts/bump-version.js"
   },
   "license": "MIT",
   "engines": {

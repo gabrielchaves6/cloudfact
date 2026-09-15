@@ -23,5 +23,8 @@ Node 20.19+ (see `.nvmrc`). `npm run inspect` opens the MCP Inspector against `d
 
 ## Releasing
 
-1. Bump the version in the four places above (`npm version --no-git-tag-version x.y.z` + `server.json` + plugin manifests), update `CHANGELOG.md`.
-2. `npm run check`, commit, tag `vx.y.z`, push the tag. The release workflow publishes to npm (needs `NPM_TOKEN`) and creates the GitHub release.
+Releases are continuous from `main`: bump the version and push.
+
+1. `npm run bump x.y.z` (updates `package.json`, `server.json` and the plugin manifests) and add a `CHANGELOG.md` entry.
+2. `npm run check`, commit, push to `main`.
+3. The `release` workflow sees the new version, runs the full check, publishes to npm (when the `NPM_TOKEN` secret exists), creates the `vx.y.z` tag and the GitHub release with generated notes. Pushes that do not change the version only run CI.

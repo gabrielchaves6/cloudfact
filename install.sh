@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Plug-and-play installer for cloudfact.
-#   curl -fsSL https://raw.githubusercontent.com/gabrielchaves6/cloudfact/master/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/gabrielchaves6/cloudfact/main/install.sh | bash
 # or, inside a clone: ./install.sh
 # Does: code in ~/.cloudfact/app (or the current clone), `cloudfact` on PATH, Claude Code plugin, Codex skill + MCP.
 set -euo pipefail

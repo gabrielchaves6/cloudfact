@@ -2,15 +2,25 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.gabrielchaves6/cloudfact",
   "description": "Publish a folder or HTML file from your machine to a public Cloudflare URL (quick tunnel or Workers static assets).",
-  "repository": { "url": "https://github.com/gabrielchaves6/cloudfact", "source": "github" },
-  "version": "0.3.0",
+  "repository": {
+    "url": "https://github.com/gabrielchaves6/cloudfact",
+    "source": "github"
+  },
+  "version": "0.3.1",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "cloudfact",
-      "version": "0.3.0",
-      "transport": { "type": "stdio" },
-      "packageArguments": [{ "type": "positional", "value": "mcp" }]
+      "version": "0.3.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ]
     }
   ]
 }

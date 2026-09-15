@@ -19,7 +19,7 @@ claude plugin install cloudfact@cloudfact
 **Everything at once** (CLI on PATH, Claude Code plugin, Codex skill + MCP). Requires Node 20+ and git:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/gabrielchaves6/cloudfact/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/gabrielchaves6/cloudfact/main/install.sh | bash
 ```
 
 **Any other MCP client** (Cursor, Windsurf, Claude Desktop…): clone and point at the bundled, dependency-free server:
