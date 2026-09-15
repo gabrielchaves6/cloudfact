@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- `expose --access a@x.com`: Cloudflare Access in front of an app that keeps running on this machine. The app gets a fixed `*.workers.dev` URL served by a new proxy Worker that verifies the Access JWT and only then forwards the request to the quick tunnel, adding the tunnel's own key cookie — so the `trycloudflare.com` hostname stays useless on its own and identity is what lets a person in. Survives cloudflared reconnects: the public URL does not change and the Worker is repointed at the new tunnel hostname automatically. Also available on the `expose` MCP tool.
+  Unlike a named tunnel on your own domain, this needs no DNS permission on the API token.
+
+### Changed
+
+- Access JWT verification moved to `backends/workers/access-js.ts` and is now shared by the asset gate Worker and the new proxy Worker, so both verify identity with the same code.
+
 ## [0.7.4] - 2026-09-15
 
 ### Fixed

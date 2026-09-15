@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { HOME, VERSION, readConfig } from './config.js';
 import { deployTunnel, newKey, stopTunnel } from './backends/tunnel/index.js';
-import { rotateWorkersKey } from './backends/workers/index.js';
+import { deployAccessProxy, rotateWorkersKey } from './backends/workers/index.js';
 import { expiryFrom } from './services/duration.js';
 import { deleteWorker, deployWorkers } from './backends/workers/index.js';
 import { cloudflaredVersion, findCloudflared } from './services/cloudflared.js';
@@ -80,9 +80,12 @@ export async function expose(opts: ExposeOptions): Promise<DeployResult> {
   const ssh = opts.ssh?.destination
     ? { destination: opts.ssh.destination, port: opts.ssh.port, identity: opts.ssh.identity, strictHostKey: opts.ssh.strictHostKey }
     : null;
-  const priv = !opts.public;
+  const access = opts.access?.length ? opts.access : null;
+  // With Access the tunnel keeps its key gate and only the Worker holds the key, so the
+  // trycloudflare hostname is useless on its own; identity is what lets a person in.
+  const priv = access ? true : !opts.public;
   const name = slug(opts.name ?? (ssh ? `${ssh.destination.split('@').pop()}-${opts.port}` : `port-${opts.port}`));
-  return deployTunnel({
+  const result = await deployTunnel({
     name,
     mode: 'proxy',
     root: null,
@@ -90,10 +93,16 @@ export async function expose(opts: ExposeOptions): Promise<DeployResult> {
     targetPort: opts.port,
     ssh,
     private: priv,
-    keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
+    keyExpiresAt: priv ? (access ? null : expiryFrom(opts.expires)) : null,
     restart: Boolean(opts.restart),
     timeoutMs: opts.timeoutMs ?? 45_000,
   });
+  if (!access) return result;
+  if (!result.url) throw new Error(`the tunnel for "${name}" came up without a URL`);
+  const proxy = await deployAccessProxy({ name, origin: result.url, originKey: readState(name)?.key ?? null, emails: access });
+  const next = { ...readState(name)!, url: proxy.url, tunnelUrl: result.url, privateUrl: null, access: proxy.access };
+  writeState(name, next);
+  return { ...summarize(next), reused: result.reused };
 }
 
 /**

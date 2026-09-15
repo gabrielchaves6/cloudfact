@@ -1,9 +1,9 @@
 import { createRequire as __cloudfactRequire } from 'node:module'; const require = __cloudfactRequire(import.meta.url);
 
 // src/backends/tunnel/host.ts
-import fs5 from "fs";
+import fs7 from "fs";
 import http2 from "http";
-import path5 from "path";
+import path6 from "path";
 import { spawn } from "child_process";
 
 // src/config.ts
@@ -108,6 +108,52 @@ function patchState(name2, patch) {
   const next = { ...current, ...patch };
   writeState(name2, next);
   return next;
+}
+
+// src/backends/workers/index.ts
+import fs5 from "fs";
+import path4 from "path";
+
+// src/services/wrangler.ts
+import fs4 from "fs";
+import { spawnSync as spawnSync2 } from "child_process";
+var stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
+function credentials(cfg = readConfig()) {
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID ?? cfg.cloudflareAccountId ?? null;
+  const token = process.env.CLOUDFLARE_API_TOKEN ?? cfg.cloudflareApiToken;
+  if (token) return { source: "token", token, accountId };
+  try {
+    if (/oauth_token\s*=\s*"[^"]+"/.test(fs4.readFileSync(WRANGLER_CONFIG, "utf8"))) {
+      return { source: "wrangler", token: null, accountId };
+    }
+  } catch {
+  }
+  return null;
+}
+function wranglerCommand(cfg = readConfig()) {
+  return cfg.wranglerCommand ? cfg.wranglerCommand.split(" ") : ["npx", "--yes", "wrangler@4"];
+}
+function wranglerEnv(creds) {
+  const env = { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" };
+  if (creds?.token) env.CLOUDFLARE_API_TOKEN = creds.token;
+  if (creds?.accountId) env.CLOUDFLARE_ACCOUNT_ID = creds.accountId;
+  return env;
+}
+function runWrangler(args, opts = {}) {
+  const cfg = opts.cfg ?? readConfig();
+  const [cmd, ...base] = wranglerCommand(cfg);
+  const r = spawnSync2(cmd, [...base, ...args], {
+    encoding: "utf8",
+    env: wranglerEnv(opts.creds ?? credentials(cfg)),
+    cwd: opts.cwd,
+    input: opts.input,
+    maxBuffer: 16 * 1024 * 1024
+  });
+  const text = stripAnsi((r.stdout ?? "") + (r.stderr ?? ""));
+  if (opts.logFile) fs4.appendFileSync(opts.logFile, `
+$ wrangler ${args.join(" ")}
+${text}`);
+  return { status: r.status, text };
 }
 
 // src/backends/tunnel/gate.ts
@@ -218,6 +264,217 @@ function staticGate(key, cookieName) {
   return createGate({ getKey: () => ({ key: key ?? null }), cookieName });
 }
 
+// src/backends/workers/access-js.ts
+var ACCESS_JS = `const enc = new TextEncoder();
+const reply = (status, body, headers) =>
+  new Response(body, { status, headers: { 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...headers } });
+
+// --- Cloudflare Access JWT verification (RS256 against the team's JWKS, cached in the isolate) ---
+let certsCache = { team: null, keys: null, at: 0 };
+async function accessKeys(team, force) {
+  if (!force && certsCache.team === team && certsCache.keys && Date.now() - certsCache.at < 600000) return certsCache.keys;
+  const res = await fetch('https://' + team + '/cdn-cgi/access/certs');
+  if (!res.ok) throw new Error('access certs: HTTP ' + res.status);
+  const data = await res.json();
+  const keys = [];
+  for (const jwk of data.keys || []) {
+    if (jwk.kty !== 'RSA') continue;
+    const key = await crypto.subtle.importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
+    keys.push({ kid: jwk.kid, key });
+  }
+  certsCache = { team, keys, at: Date.now() };
+  return keys;
+}
+function b64url(s) {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = s.length % 4;
+  if (pad) s += '='.repeat(4 - pad);
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function accessToken(request) {
+  const header = request.headers.get('cf-access-jwt-assertion');
+  if (header) return header;
+  for (const part of (request.headers.get('cookie') || '').split(';')) {
+    const [k, ...v] = part.trim().split('=');
+    if (k === 'CF_Authorization') return v.join('=');
+  }
+  return null;
+}
+async function verifyAccess(request, team, aud) {
+  const token = accessToken(request);
+  if (!token) return false;
+  const parts = token.split('.');
+  if (parts.length !== 3) return false;
+  let header, payload;
+  try {
+    header = JSON.parse(new TextDecoder().decode(b64url(parts[0])));
+    payload = JSON.parse(new TextDecoder().decode(b64url(parts[1])));
+  } catch {
+    return false;
+  }
+  if (!header || header.alg !== 'RS256' || !payload) return false;
+  let keys = await accessKeys(team, false);
+  let entry = keys.find((k) => k.kid === header.kid);
+  if (!entry) {
+    keys = await accessKeys(team, true); // key rotation: refresh once
+    entry = keys.find((k) => k.kid === header.kid);
+  }
+  if (!entry) return false;
+  const ok = await crypto.subtle.verify({ name: 'RSASSA-PKCS1-v1_5' }, entry.key, b64url(parts[2]), enc.encode(parts[0] + '.' + parts[1]));
+  if (!ok) return false;
+  const now = Math.floor(Date.now() / 1000);
+  if (typeof payload.exp !== 'number' || payload.exp <= now) return false;
+  if (typeof payload.nbf === 'number' && payload.nbf > now + 60) return false;
+  if (payload.iss !== 'https://' + team) return false;
+  const auds = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+  return auds.includes(aud);
+}
+`;
+
+// src/backends/workers/gate-worker.ts
+var WORKER_SOURCE = `// generated by cloudfact \u2014 gate worker
+const COOKIE = 'cloudfact_access';
+const GATE_HTML = ${JSON.stringify(GATE_HTML)};
+${ACCESS_JS}
+function timingEqual(a, b) {
+  const x = enc.encode(a), y = enc.encode(b);
+  if (x.byteLength !== y.byteLength) return false;
+  return crypto.subtle.timingSafeEqual(x, y);
+}
+function cookieValue(request) {
+  for (const part of (request.headers.get('cookie') || '').split(';')) {
+    const [k, ...v] = part.trim().split('=');
+    if (k === COOKIE) return v.join('=');
+  }
+  return null;
+}
+
+export default {
+  async fetch(request, env, ctx) {
+    if (env.CLOUDFACT_ACCESS === '1') {
+      if (!env.CLOUDFACT_ACCESS_AUD || !env.CLOUDFACT_ACCESS_TEAM) return reply(503, 'cloudfact: Cloudflare Access not configured for this site yet', { 'content-type': 'text/plain' });
+      let ok = false;
+      try {
+        ok = await verifyAccess(request, env.CLOUDFACT_ACCESS_TEAM, env.CLOUDFACT_ACCESS_AUD);
+      } catch {
+        ok = false;
+      }
+      if (!ok) return reply(403, 'cloudfact: this site is protected by Cloudflare Access and the request carried no valid Access token for it. Sign in at https://' + new URL(request.url).host + '/ (if you just signed in, the Access application may still be propagating; retry in a minute).', { 'content-type': 'text/plain' });
+      const res = await env.ASSETS.fetch(request);
+      const out = new Response(res.body, res);
+      out.headers.set('cache-control', 'private, no-cache');
+      out.headers.set('x-robots-tag', 'noindex, nofollow');
+      return out;
+    }
+    const key = env.CLOUDFACT_KEY;
+    if (!key) return reply(503, 'cloudfact: key not configured', { 'content-type': 'text/plain' });
+    const expired = env.CLOUDFACT_KEY_EXPIRES ? Date.parse(env.CLOUDFACT_KEY_EXPIRES) <= Date.now() : false;
+    const url = new URL(request.url);
+    if (url.pathname === '/api/session' && request.method === 'POST') {
+      const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+      if (env.SESSION_LIMIT) {
+        try {
+          const { success } = await env.SESSION_LIMIT.limit({ key: ip });
+          if (!success) return reply(429, '{"error":"rate_limited"}', { 'content-type': 'application/json', 'retry-after': '60' });
+        } catch {}
+      }
+      const auth = request.headers.get('authorization') || '';
+      const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+      if (expired) return reply(401, '{"error":"expired"}', { 'content-type': 'application/json' });
+      if (!timingEqual(token, key)) return reply(401, '{"error":"invalid"}', { 'content-type': 'application/json' });
+      return reply(204, null, { 'set-cookie': COOKIE + '=' + key + '; Path=/; HttpOnly; Secure; SameSite=Lax' });
+    }
+    const value = cookieValue(request);
+    const ok = !expired && value !== null && timingEqual(value, key);
+    if (!ok) return reply(200, GATE_HTML, { 'content-type': 'text/html; charset=utf-8' });
+    const res = await env.ASSETS.fetch(request);
+    const out = new Response(res.body, res);
+    out.headers.set('cache-control', 'private, no-cache');
+    out.headers.set('x-robots-tag', 'noindex, nofollow');
+    return out;
+  },
+};
+`;
+
+// src/backends/workers/proxy-worker.ts
+var PROXY_WORKER_SOURCE = `// generated by cloudfact \u2014 access proxy worker
+${ACCESS_JS}
+const ORIGIN_COOKIE = 'cloudfact_access';
+const HOP_BY_HOP = ['connection', 'keep-alive', 'transfer-encoding', 'te', 'trailer', 'proxy-authorization', 'proxy-authenticate'];
+
+export default {
+  async fetch(request, env) {
+    if (env.CLOUDFACT_ACCESS !== '1' || !env.CLOUDFACT_ACCESS_AUD || !env.CLOUDFACT_ACCESS_TEAM) {
+      return reply(503, 'cloudfact: Cloudflare Access is not configured for this app yet', { 'content-type': 'text/plain' });
+    }
+    let ok = false;
+    try {
+      ok = await verifyAccess(request, env.CLOUDFACT_ACCESS_TEAM, env.CLOUDFACT_ACCESS_AUD);
+    } catch {
+      ok = false;
+    }
+    if (!ok) {
+      return reply(
+        403,
+        'cloudfact: this app is protected by Cloudflare Access and the request carried no valid Access token for it. Sign in at https://' +
+          new URL(request.url).host +
+          '/ (if you just signed in, the Access application may still be propagating; retry in a minute).',
+        { 'content-type': 'text/plain' },
+      );
+    }
+    if (!env.CLOUDFACT_ORIGIN) {
+      return reply(503, 'cloudfact: the machine serving this app has no tunnel right now; it should reconnect on its own', {
+        'content-type': 'text/plain',
+      });
+    }
+    const url = new URL(request.url);
+    const target = new URL(url.pathname + url.search, env.CLOUDFACT_ORIGIN);
+    const headers = new Headers(request.headers);
+    for (const h of HOP_BY_HOP) headers.delete(h);
+    headers.delete('cf-access-jwt-assertion');
+    headers.delete('cookie');
+    if (env.CLOUDFACT_ORIGIN_KEY) headers.set('cookie', ORIGIN_COOKIE + '=' + env.CLOUDFACT_ORIGIN_KEY);
+    headers.set('x-forwarded-host', url.host);
+    headers.set('x-forwarded-proto', 'https');
+    const init = { method: request.method, headers, redirect: 'manual' };
+    if (request.method !== 'GET' && request.method !== 'HEAD') init.body = request.body;
+    let res;
+    try {
+      res = await fetch(target.toString(), init);
+    } catch (e) {
+      return reply(502, 'cloudfact: the machine serving this app did not answer (' + e + ')', { 'content-type': 'text/plain' });
+    }
+    if (res.webSocket) return new Response(null, { status: 101, webSocket: res.webSocket });
+    const out = new Response(res.body, res);
+    out.headers.set('cache-control', 'private, no-cache');
+    out.headers.set('x-robots-tag', 'noindex, nofollow');
+    return out;
+  },
+};
+`;
+
+// src/services/access.ts
+function accessVars(app) {
+  return ["--var", "CLOUDFACT_ACCESS:1", "--var", `CLOUDFACT_ACCESS_AUD:${app.aud}`, "--var", `CLOUDFACT_ACCESS_TEAM:${app.teamDomain}`];
+}
+
+// src/backends/workers/index.ts
+function refreshAccessProxyOrigin(name2, origin) {
+  const dir2 = deployDir(name2);
+  const config = path4.join(dir2, "worker", "wrangler.jsonc");
+  const s = readState(name2);
+  if (!fs5.existsSync(config) || !s?.access) return;
+  const r = runWrangler(["deploy", "--config", config, ...accessVars(s.access), "--var", `CLOUDFACT_ORIGIN:${origin}`], {
+    cwd: path4.join(dir2, "worker"),
+    logFile: path4.join(dir2, "wrangler.log")
+  });
+  if (r.status !== 0) throw new Error(`wrangler deploy failed:
+${r.text.slice(-800)}`);
+}
+
 // src/backends/tunnel/proxy.ts
 import http from "http";
 import net from "net";
@@ -278,8 +535,8 @@ function createProxy(opts) {
 }
 
 // src/backends/tunnel/static-server.ts
-import fs4 from "fs";
-import path4 from "path";
+import fs6 from "fs";
+import path5 from "path";
 var MIME = {
   ".html": "text/html; charset=utf-8",
   ".htm": "text/html; charset=utf-8",
@@ -326,7 +583,7 @@ function send(res, code, body, headers = {}) {
 }
 var escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 function listing(urlPath, absDir) {
-  const entries = fs4.readdirSync(absDir, { withFileTypes: true }).filter((e) => !e.name.startsWith(".")).sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
+  const entries = fs6.readdirSync(absDir, { withFileTypes: true }).filter((e) => !e.name.startsWith(".")).sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
   const rows = entries.map((e) => {
     const suffix = e.isDirectory() ? "/" : "";
     return `<li><a href="${escapeHtml(encodeURIComponent(e.name))}${suffix}">${escapeHtml(e.name + suffix)}</a></li>`;
@@ -346,13 +603,13 @@ function safeResolve(root, urlPath) {
   if (decoded.includes("\0")) return null;
   const parts = decoded.split("/").filter(Boolean);
   if (parts.some((p) => p === ".." || p.startsWith("."))) return null;
-  const abs = path4.resolve(root, ...parts);
-  if (abs !== root && !abs.startsWith(root + path4.sep)) return null;
+  const abs = path5.resolve(root, ...parts);
+  if (abs !== root && !abs.startsWith(root + path5.sep)) return null;
   return abs;
 }
 function createStaticHandler(opts) {
-  const root = opts.root ? path4.resolve(opts.root) : null;
-  const file = opts.file ? path4.resolve(opts.file) : null;
+  const root = opts.root ? path5.resolve(opts.root) : null;
+  const file = opts.file ? path5.resolve(opts.file) : null;
   const gate2 = opts.gate ?? staticGate(opts.key, opts.cookieName);
   return (req, res) => {
     const method = req.method ?? "GET";
@@ -361,7 +618,7 @@ function createStaticHandler(opts) {
     if (method !== "GET" && method !== "HEAD") return send(res, 405, "method not allowed");
     let abs;
     if (opts.mode === "file") {
-      const allowed = /* @__PURE__ */ new Set(["/", "/index.html", `/${path4.basename(file ?? "")}`]);
+      const allowed = /* @__PURE__ */ new Set(["/", "/index.html", `/${path5.basename(file ?? "")}`]);
       if (!allowed.has(url.pathname)) return send(res, 404, "not found");
       abs = file;
     } else {
@@ -370,16 +627,16 @@ function createStaticHandler(opts) {
     if (!abs) return send(res, 404, "not found");
     let stat;
     try {
-      stat = fs4.statSync(abs);
+      stat = fs6.statSync(abs);
     } catch {
       return send(res, 404, "not found");
     }
     if (stat.isDirectory()) {
       if (!url.pathname.endsWith("/")) return send(res, 301, "", { Location: `${url.pathname}/${url.search}` });
-      const index = path4.join(abs, "index.html");
-      if (fs4.existsSync(index)) {
+      const index = path5.join(abs, "index.html");
+      if (fs6.existsSync(index)) {
         abs = index;
-        stat = fs4.statSync(index);
+        stat = fs6.statSync(index);
       } else {
         return send(res, 200, listing(url.pathname, abs), { "Content-Type": "text/html; charset=utf-8" });
       }
@@ -391,13 +648,13 @@ function createStaticHandler(opts) {
     }
     res.writeHead(200, {
       ...BASE_HEADERS,
-      "Content-Type": MIME[path4.extname(abs).toLowerCase()] ?? "application/octet-stream",
+      "Content-Type": MIME[path5.extname(abs).toLowerCase()] ?? "application/octet-stream",
       "Content-Length": stat.size,
       ETag: etag,
       "Last-Modified": stat.mtime.toUTCString()
     });
     if (method === "HEAD") return res.end();
-    fs4.createReadStream(abs).on("error", () => res.destroy()).pipe(res);
+    fs6.createReadStream(abs).on("error", () => res.destroy()).pipe(res);
   };
 }
 
@@ -489,9 +746,9 @@ function startSshForward(localPort) {
   if (port) args.push("-p", String(port));
   if (identity) args.push("-i", identity);
   args.push(destination);
-  const logFd = fs5.openSync(path5.join(dir, "ssh.log"), "a");
+  const logFd = fs7.openSync(path6.join(dir, "ssh.log"), "a");
   ssh = spawn("ssh", args, { stdio: ["ignore", logFd, logFd], windowsHide: true });
-  fs5.closeSync(logFd);
+  fs7.closeSync(logFd);
   patchState(name, { sshPid: ssh.pid ?? null });
   log.ts(`ssh forward 127.0.0.1:${localPort} \u2192 ${destination}:${initial.targetPort}`);
   ssh.on("exit", (code, signal) => {
@@ -511,40 +768,61 @@ function startTunnel(port) {
     patchState(name, { status: "error", error: "cloudflared not found" });
     return;
   }
-  const logFd = fs5.openSync(path5.join(dir, "tunnel.log"), "a");
+  const logFd = fs7.openSync(path6.join(dir, "tunnel.log"), "a");
   tunnel = spawn(bin, ["tunnel", "--url", `http://127.0.0.1:${port}`, "--no-autoupdate", "--protocol", "http2"], {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true
   });
-  patchState(name, { tunnelPid: tunnel.pid ?? null, url: null, privateUrl: null, status: "starting" });
+  const proxiedDeploy = Boolean(readState(name)?.access);
+  patchState(name, {
+    tunnelPid: tunnel.pid ?? null,
+    ...proxiedDeploy ? { tunnelUrl: null } : { url: null, privateUrl: null },
+    status: "starting"
+  });
   let found = false;
   const scan = (chunk) => {
-    fs5.writeSync(logFd, chunk);
+    fs7.writeSync(logFd, chunk);
     if (found) return;
     const match = chunk.toString().match(TUNNEL_URL);
     if (!match) return;
     found = true;
     const url = match[0];
-    const key = readState(name)?.key;
+    const st = readState(name);
+    const proxied = Boolean(st?.access);
     patchState(name, {
-      url,
-      privateUrl: key ? `${url}/#key=${key}` : null,
+      tunnelUrl: url,
+      url: proxied ? st?.url ?? null : url,
+      privateUrl: proxied ? null : st?.key ? `${url}/#key=${st.key}` : null,
       status: "running",
       error: null,
       urlAt: (/* @__PURE__ */ new Date()).toISOString()
     });
     log.ts("tunnel ready:", url);
+    if (proxied) {
+      try {
+        refreshAccessProxyOrigin(name, url);
+        log.ts("access proxy origin updated to", url);
+      } catch (e) {
+        log.ts("could not update the access proxy origin:", String(e));
+        patchState(name, { error: `access proxy origin not updated: ${String(e)}` });
+      }
+    }
   };
   tunnel.stdout?.on("data", scan);
   tunnel.stderr?.on("data", scan);
   tunnel.on("exit", (code, signal) => {
-    fs5.closeSync(logFd);
+    fs7.closeSync(logFd);
     tunnel = null;
     if (stopping) return;
     restarts += 1;
     const delay = Math.min(3e4, 2e3 * restarts);
     log.ts(`cloudflared exited (code=${code} sig=${signal}); restarting in ${delay / 1e3}s`);
-    patchState(name, { status: "reconnecting", url: null, privateUrl: null, tunnelPid: null, restarts });
+    patchState(name, {
+      status: "reconnecting",
+      ...proxiedDeploy ? { tunnelUrl: null } : { url: null, privateUrl: null },
+      tunnelPid: null,
+      restarts
+    });
     setTimeout(() => startTunnel(port), delay);
   });
 }
