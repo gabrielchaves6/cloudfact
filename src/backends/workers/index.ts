@@ -5,7 +5,8 @@ import { readConfig } from '../../config.js';
 import { deployDir, readState, summarize, writeState } from '../../services/state.js';
 import { credentials, runWrangler } from '../../services/wrangler.js';
 import { WORKER_SOURCE, wranglerConfig } from './gate-worker.js';
-import { accessContext, accessVars, deleteAccessApp, upsertAccessApp, workersSubdomain } from '../../services/access.js';
+import { PROXY_WORKER_SOURCE, proxyWranglerConfig } from './proxy-worker.js';
+import { accessContext, accessVars, deleteAccessApp, upsertAccessApp, workersSubdomain, type AccessApp } from '../../services/access.js';
 import type { DeployMode, DeployResult } from '../../types.js';
 
 export interface WorkersTarget {
@@ -195,4 +196,74 @@ export async function deleteWorker(name: string): Promise<string> {
   const r = runWrangler(['delete', '--name', name, '--force'], { cwd: path.join(deployDir(name), 'empty') });
   notes.unshift(r.status === 0 ? 'worker deleted' : `failed to delete worker: ${r.text.slice(-400)}`);
   return notes.join('; ');
+}
+
+export interface AccessProxyTarget {
+  /** Deploy name; also the Worker name and the workers.dev hostname label. */
+  name: string;
+  /** Tunnel URL the Worker forwards to, e.g. https://xyz.trycloudflare.com */
+  origin: string;
+  /** Key of the tunnel's own gate, sent as a cookie so the origin accepts the forwarded request. */
+  originKey: string | null;
+  emails: string[];
+}
+
+/**
+ * Puts a Cloudflare Access-gated Worker in front of a tunnel origin: `expose --access`.
+ * The app keeps serving from this machine; the Worker only adds identity and a fixed URL.
+ */
+export async function deployAccessProxy(t: AccessProxyTarget): Promise<{ url: string; access: AccessApp }> {
+  const cfg = readConfig();
+  const creds = credentials(cfg);
+  if (!creds) throw new Error('--access needs a Cloudflare sign-in: `cloudfact login --token <token>`');
+  const ctx = accessContext(cfg);
+  const dir = deployDir(t.name);
+  const workerDir = path.join(dir, 'worker');
+  fs.mkdirSync(workerDir, { recursive: true, mode: 0o700 });
+  const compatibilityDate = new Date().toISOString().slice(0, 10);
+  fs.writeFileSync(path.join(workerDir, 'index.js'), PROXY_WORKER_SOURCE);
+  fs.writeFileSync(path.join(workerDir, 'wrangler.jsonc'), proxyWranglerConfig(t.name, compatibilityDate));
+  const logFile = path.join(dir, 'wrangler.log');
+  const config = path.join(workerDir, 'wrangler.jsonc');
+  const deployOnce = (a: AccessApp) =>
+    runWrangler(['deploy', '--config', config, ...accessVars(a), '--var', `CLOUDFACT_ORIGIN:${t.origin}`], {
+      cfg,
+      creds,
+      cwd: workerDir,
+      logFile,
+    });
+  // The Access app (and its AUD) must exist before the Worker goes live: the Worker verifies against it.
+  let access = await upsertAccessApp(ctx, {
+    name: t.name,
+    domain: `${t.name}.${await workersSubdomain(ctx)}.workers.dev`,
+    emails: t.emails,
+  });
+  let r = deployOnce(access);
+  if (r.status !== 0) throw new Error(`wrangler deploy failed:\n${r.text.slice(-1500)}`);
+  const url = (r.text.match(/https:\/\/[a-z0-9.-]+\.workers\.dev/g) ?? []).find((u) => u.includes(`//${t.name}.`));
+  if (!url) throw new Error(`could not read the Worker URL from wrangler output:\n${r.text.slice(-800)}`);
+  if (new URL(url).host !== access.domain) {
+    // the subdomain changed under us: protect the real hostname and point the Worker at the new AUD
+    access = await upsertAccessApp(ctx, { name: t.name, domain: new URL(url).host, emails: t.emails });
+    r = deployOnce(access);
+    if (r.status !== 0) throw new Error(`wrangler deploy failed:\n${r.text.slice(-1500)}`);
+  }
+  if (t.originKey) {
+    const s = putSecret(t.name, 'CLOUDFACT_ORIGIN_KEY', t.originKey, { cwd: workerDir, logFile });
+    if (s.status !== 0) throw new Error(`wrangler secret put failed:\n${s.text.slice(-800)}`);
+  }
+  return { url, access };
+}
+
+/** Points a live Access proxy at a new tunnel URL: cloudflared gets a new hostname on every restart. */
+export function refreshAccessProxyOrigin(name: string, origin: string): void {
+  const dir = deployDir(name);
+  const config = path.join(dir, 'worker', 'wrangler.jsonc');
+  const s = readState(name);
+  if (!fs.existsSync(config) || !s?.access) return;
+  const r = runWrangler(['deploy', '--config', config, ...accessVars(s.access), '--var', `CLOUDFACT_ORIGIN:${origin}`], {
+    cwd: path.join(dir, 'worker'),
+    logFile: path.join(dir, 'wrangler.log'),
+  });
+  if (r.status !== 0) throw new Error(`wrangler deploy failed:\n${r.text.slice(-800)}`);
 }

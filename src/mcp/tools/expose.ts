@@ -22,8 +22,20 @@ export const exposeTool = defineTool({
     sshPort: z.number().int().optional().describe('SSH port (default 22)'),
     identity: z.string().optional().describe('Path to the SSH private key (default: ssh agent / ~/.ssh/config)'),
     strictHostKey: z.boolean().optional().describe('Require the SSH host key to be in known_hosts already (no first-connection trust)'),
+    access: z
+      .array(z.string())
+      .optional()
+      .describe('Emails allowed to sign in through Cloudflare Access (identity gate and a fixed workers.dev URL instead of the key link)'),
     restart: z.boolean().optional().describe('Restart even if already live (yields a new URL)'),
   },
-  handler: ({ port, name, public: pub, expires, ssh, sshPort, identity, strictHostKey, restart }) =>
-    expose({ port, name, public: pub, expires, restart, ssh: ssh ? { destination: ssh, port: sshPort, identity, strictHostKey } : null }),
+  handler: ({ port, name, public: pub, expires, access, ssh, sshPort, identity, strictHostKey, restart }) =>
+    expose({
+      port,
+      name,
+      public: pub,
+      expires,
+      access,
+      restart,
+      ssh: ssh ? { destination: ssh, port: sshPort, identity, strictHostKey } : null,
+    }),
 });

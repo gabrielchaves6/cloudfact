@@ -11,6 +11,7 @@ import { readConfig } from '../../config.js';
 import { log } from '../../logger.js';
 import { findCloudflared } from '../../services/cloudflared.js';
 import { deployDir, patchState, readState } from '../../services/state.js';
+import { refreshAccessProxyOrigin } from '../workers/index.js';
 import { createGate } from './gate.js';
 import { createProxy } from './proxy.js';
 import { createStaticHandler } from './static-server.js';
@@ -137,7 +138,12 @@ function startTunnel(port: number): void {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
-  patchState(name, { tunnelPid: tunnel.pid ?? null, url: null, privateUrl: null, status: 'starting' });
+  const proxiedDeploy = Boolean(readState(name)?.access);
+  patchState(name, {
+    tunnelPid: tunnel.pid ?? null,
+    ...(proxiedDeploy ? { tunnelUrl: null } : { url: null, privateUrl: null }),
+    status: 'starting',
+  });
   let found = false;
   const scan = (chunk: Buffer) => {
     fs.writeSync(logFd, chunk);
@@ -146,15 +152,27 @@ function startTunnel(port: number): void {
     if (!match) return;
     found = true;
     const url = match[0];
-    const key = readState(name)?.key;
+    const st = readState(name);
+    // Behind an Access proxy the public URL is the Worker's; the tunnel hostname stays internal.
+    const proxied = Boolean(st?.access);
     patchState(name, {
-      url,
-      privateUrl: key ? `${url}/#key=${key}` : null,
+      tunnelUrl: url,
+      url: proxied ? (st?.url ?? null) : url,
+      privateUrl: proxied ? null : st?.key ? `${url}/#key=${st.key}` : null,
       status: 'running',
       error: null,
       urlAt: new Date().toISOString(),
     });
     log.ts('tunnel ready:', url);
+    if (proxied) {
+      try {
+        refreshAccessProxyOrigin(name, url);
+        log.ts('access proxy origin updated to', url);
+      } catch (e) {
+        log.ts('could not update the access proxy origin:', String(e));
+        patchState(name, { error: `access proxy origin not updated: ${String(e)}` });
+      }
+    }
   };
   tunnel.stdout?.on('data', scan);
   tunnel.stderr?.on('data', scan);
@@ -165,7 +183,12 @@ function startTunnel(port: number): void {
     restarts += 1;
     const delay = Math.min(30_000, 2_000 * restarts);
     log.ts(`cloudflared exited (code=${code} sig=${signal}); restarting in ${delay / 1000}s`);
-    patchState(name, { status: 'reconnecting', url: null, privateUrl: null, tunnelPid: null, restarts });
+    patchState(name, {
+      status: 'reconnecting',
+      ...(proxiedDeploy ? { tunnelUrl: null } : { url: null, privateUrl: null }),
+      tunnelPid: null,
+      restarts,
+    });
     setTimeout(() => startTunnel(port), delay);
   });
 }

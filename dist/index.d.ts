@@ -27,6 +27,8 @@ interface DeployState {
     local?: string | null;
     restarts?: number;
     urlAt?: string;
+    /** Tunnel hostname behind an Access proxy; `url` then holds the public workers.dev URL. */
+    tunnelUrl?: string | null;
     stoppedAt?: string;
     targetPort?: number | null;
     ssh?: SshTarget | null;
@@ -63,6 +65,8 @@ interface ExposeOptions {
     /** Key lifetime, e.g. "30m", "24h", "7d". Default: no expiry. */
     expires?: string;
     ssh?: SshTarget | null;
+    /** Emails allowed in through Cloudflare Access. Adds a fixed workers.dev URL in front of the tunnel. */
+    access?: string[];
     restart?: boolean;
     timeoutMs?: number;
 }
