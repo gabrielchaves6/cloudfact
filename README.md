@@ -87,6 +87,8 @@ cloudfact deploy ./site --access you@example.com,ana@x.com  # → https://site.<
 
 The API token needs the "Edit Cloudflare Workers" template plus **Access: Apps and Policies — Edit** and **Access: Organizations, Identity Providers, and Groups — Edit**. cloudfact creates the Zero Trust team (`<team>.cloudflareaccess.com`) and the one-time PIN provider on first use, then one self-hosted Access application per deploy, updated in place on redeploy and deleted by `remove`. The generated Worker refuses any request that did not come through Access (`ctx.access`), so a misconfigured policy fails closed instead of open.
 
+Verified end-to-end on a real Cloudflare account (2026-09-15): the team, the one-time PIN provider and the application were created through the API alone, no Zero Trust checkout or payment method was required, and the `*.workers.dev` URL redirects to the `<team>.cloudflareaccess.com` sign-in page before any request reaches the Worker.
+
 Local server safety: serves only what is inside the published folder, never dotfiles, no path traversal. A single `.html` is served alone (relative assets are not included; publish the folder in that case).
 
 ## MCP
