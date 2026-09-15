@@ -4,7 +4,7 @@ _Generated from `src/mcp/tools` by `npm run docs`. Do not edit by hand._
 
 ## `deploy` — Publish static site
 
-Publish a folder (or a single .html file) from this machine to a public Cloudflare URL. "tunnel" backend (default when signed out): local static server + cloudflared quick tunnel, *.trycloudflare.com URL; the process runs in the background and outlives the session. "workers" backend (default when signed in): Cloudflare Workers with static assets, fixed URL https://<name>.<sub>.workers.dev; redeploying updates the same address. Idempotent on tunnel: if the same path is already live, returns the existing URL (reused=true). Deploys are PRIVATE by default on both backends (key-gated link; on workers a gate Worker runs in front of the files); pass public=true to publish openly. Returns JSON with url and, when private, privateUrl (already includes #key=...).
+Publish a folder (or a single .html file) from this machine to a public Cloudflare URL. "tunnel" backend (default when signed out): local static server + cloudflared quick tunnel, *.trycloudflare.com URL; the process runs in the background and outlives the session. "workers" backend (default when signed in): Cloudflare Workers with static assets, fixed URL https://<name>.<sub>.workers.dev; redeploying updates the same address. Idempotent on tunnel: if the same path is already live, returns the existing URL (reused=true). Deploys are PRIVATE by default on both backends (key-gated link; on workers a gate Worker runs in front of the files); pass public=true to publish openly. access=[emails] (workers backend, API-token login) puts Cloudflare Access in front instead: visitors sign in with a one-time email code and only listed emails get in. Returns JSON with url and, when private, privateUrl (already includes #key=...).
 
 _mutating, idempotent_
 
@@ -15,6 +15,7 @@ _mutating, idempotent_
 | `public` | boolean | no | Publish without the key gate (default false: private) |
 | `backend` | `auto` \| `tunnel` \| `workers` | no | auto = workers when signed in to Cloudflare, otherwise tunnel |
 | `expires` | string | no | Private key lifetime, e.g. "30m", "24h", "7d" (default: never expires) |
+| `access` | array | no | Emails allowed to sign in through Cloudflare Access (identity gate instead of the key link; workers backend) |
 | `restart` | boolean | no | Restart even if already live (yields a new URL on tunnel) |
 
 ## `expose` — Expose a running app

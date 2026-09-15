@@ -101,6 +101,7 @@ describe('Cloudflare Access', () => {
     expect(r.access).toEqual({
       appId: 'app-1',
       aud: 'aud-1',
+      domain: 'team-site.example-sub.workers.dev',
       emails: ['ana@example.com', 'bob@example.com'],
       teamDomain: 'cloudfact-acc123.cloudflareaccess.com',
     });

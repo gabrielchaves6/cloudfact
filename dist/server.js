@@ -21462,6 +21462,10 @@ function readConfig() {
     return {};
   }
 }
+function writeConfig(cfg) {
+  fs.mkdirSync(HOME, { recursive: true, mode: 448 });
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2) + "\n", { mode: 384 });
+}
 
 // src/mcp/define-tool.ts
 function defineTool(def) {
@@ -21794,7 +21798,15 @@ const reply = (status, body, headers) =>
   new Response(body, { status, headers: { 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...headers } });
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
+    if (env.CLOUDFACT_ACCESS === '1') {
+      if (!ctx || !ctx.access) return reply(403, 'cloudfact: this site is protected by Cloudflare Access; the request did not come through it', { 'content-type': 'text/plain' });
+      const res = await env.ASSETS.fetch(request);
+      const out = new Response(res.body, res);
+      out.headers.set('cache-control', 'private, no-cache');
+      out.headers.set('x-robots-tag', 'noindex, nofollow');
+      return out;
+    }
     const key = env.CLOUDFACT_KEY;
     if (!key) return reply(503, 'cloudfact: key not configured', { 'content-type': 'text/plain' });
     const expired = env.CLOUDFACT_KEY_EXPIRES ? Date.parse(env.CLOUDFACT_KEY_EXPIRES) <= Date.now() : false;
@@ -21838,6 +21850,89 @@ function wranglerConfig(name, compatibilityDate) {
     null,
     2
   );
+}
+
+// src/services/access.ts
+var API = "https://api.cloudflare.com/client/v4";
+var ACCESS_TOKEN_HELP = 'Cloudflare Access needs an API token (the browser login has no Access scopes). Create one at https://dash.cloudflare.com/profile/api-tokens \u2192 Create Token \u2192 template "Edit Cloudflare Workers" \u2192 add permissions "Access: Apps and Policies \u2014 Edit" and "Access: Organizations, Identity Providers, and Groups \u2014 Edit" \u2192 then run: cloudfact login --token <token>';
+function apiClient(token, fetchImpl = fetch) {
+  return {
+    async request(method, path8, body) {
+      const res = await fetchImpl(API + path8, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: body === void 0 ? void 0 : JSON.stringify(body)
+      });
+      let env;
+      try {
+        env = await res.json();
+      } catch {
+      }
+      if (!res.ok || env?.success === false) {
+        const msg = env?.errors?.map((e) => `${e.code}: ${e.message}`).join("; ") || `HTTP ${res.status}`;
+        throw new Error(`Cloudflare API ${method} ${path8} failed \u2014 ${msg}`);
+      }
+      return env.result;
+    }
+  };
+}
+function accessContext(cfg = readConfig(), fetchImpl) {
+  const creds = credentials(cfg);
+  if (!creds?.token) throw new Error(ACCESS_TOKEN_HELP);
+  if (!creds.accountId)
+    throw new Error("Cloudflare account id unknown; run `cloudfact login --token <token>` again (it discovers the account)");
+  return { client: apiClient(creds.token, fetchImpl), accountId: creds.accountId, cfg };
+}
+function slugTeam(input) {
+  return input.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "cloudfact";
+}
+async function ensureOrganization(ctx, teamName) {
+  const base = `/accounts/${ctx.accountId}/access/organizations`;
+  try {
+    const org = await ctx.client.request("GET", base);
+    if (org?.auth_domain) {
+      if (ctx.cfg.cloudflareTeamDomain !== org.auth_domain) writeConfig({ ...readConfig(), cloudflareTeamDomain: org.auth_domain });
+      return org.auth_domain;
+    }
+  } catch {
+  }
+  const team = slugTeam(teamName ?? ctx.cfg.cloudflareTeam ?? `cloudfact-${ctx.accountId.slice(0, 8)}`);
+  const authDomain = `${team}.cloudflareaccess.com`;
+  await ctx.client.request("POST", base, { name: team, auth_domain: authDomain, auto_redirect_to_identity: false });
+  writeConfig({ ...readConfig(), cloudflareTeamDomain: authDomain });
+  return authDomain;
+}
+async function ensureOtpProvider(ctx) {
+  const base = `/accounts/${ctx.accountId}/access/identity_providers`;
+  const list = await ctx.client.request("GET", base);
+  const otp = list.find((p) => p.type === "onetimepin");
+  if (otp) return otp.id;
+  const created = await ctx.client.request("POST", base, { name: "One-time PIN", type: "onetimepin", config: {} });
+  return created.id;
+}
+async function upsertAccessApp(ctx, opts) {
+  const teamDomain = await ensureOrganization(ctx);
+  await ensureOtpProvider(ctx);
+  const base = `/accounts/${ctx.accountId}/access/apps`;
+  const emails = [...new Set(opts.emails.map((e) => e.trim().toLowerCase()).filter(Boolean))];
+  if (!emails.length) throw new Error("--access needs at least one email");
+  const body = {
+    name: `cloudfact: ${opts.name}`,
+    domain: opts.domain,
+    type: "self_hosted",
+    session_duration: opts.sessionDuration ?? "24h",
+    auto_redirect_to_identity: true,
+    app_launcher_visible: false,
+    policies: [{ name: "cloudfact allow list", decision: "allow", include: emails.map((email2) => ({ email: { email: email2 } })) }]
+  };
+  const existing = (await ctx.client.request("GET", `${base}?per_page=100`)).find(
+    (a) => a.domain === opts.domain
+  );
+  const app = existing ? await ctx.client.request("PUT", `${base}/${existing.id}`, body) : await ctx.client.request("POST", base, body);
+  return { appId: app.id, aud: app.aud, domain: opts.domain, emails, teamDomain };
+}
+async function deleteAccessApp(ctx, appId) {
+  await ctx.client.request("DELETE", `/accounts/${ctx.accountId}/access/apps/${appId}`);
 }
 
 // src/backends/workers/index.ts
@@ -21899,7 +21994,19 @@ async function deployWorkers(t) {
   const compatibilityDate = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
   const logFile = path5.join(dir, "wrangler.log");
   let r;
-  if (t.private) {
+  const accessCtx = t.access?.length ? accessContext(cfg) : null;
+  if (accessCtx) {
+    const workerDir = path5.join(dir, "worker");
+    fs6.mkdirSync(workerDir, { recursive: true, mode: 448 });
+    fs6.writeFileSync(path5.join(workerDir, "index.js"), WORKER_SOURCE);
+    fs6.writeFileSync(path5.join(workerDir, "wrangler.jsonc"), wranglerConfig(t.name, compatibilityDate));
+    r = runWrangler(["deploy", "--config", path5.join(workerDir, "wrangler.jsonc"), "--var", "CLOUDFACT_ACCESS:1"], {
+      cfg,
+      creds,
+      cwd: workerDir,
+      logFile
+    });
+  } else if (t.private) {
     const workerDir = path5.join(dir, "worker");
     fs6.mkdirSync(workerDir, { recursive: true, mode: 448 });
     fs6.writeFileSync(path5.join(workerDir, "index.js"), WORKER_SOURCE);
@@ -21925,14 +22032,19 @@ ${s.text}` };
 ${r.text.slice(-1500)}`);
   }
   const url = (r.text.match(/https:\/\/[a-z0-9.-]+\.workers\.dev/g) ?? []).find((u) => u.includes(`//${t.name}.`)) ?? null;
+  let access = null;
+  if (accessCtx && url) {
+    access = await upsertAccessApp(accessCtx, { name: t.name, domain: new URL(url).host, emails: t.access });
+  }
   const versionId = r.text.match(/Version ID:\s*([0-9a-f-]+)/)?.[1] ?? null;
   const state = {
     ...readState(t.name),
     status: "deployed",
     url,
-    key: t.private ? t.key : null,
-    keyExpiresAt: t.private ? t.keyExpiresAt ?? null : null,
-    privateUrl: t.private && url ? `${url}/#key=${t.key}` : null,
+    key: t.private && !accessCtx ? t.key : null,
+    keyExpiresAt: t.private && !accessCtx ? t.keyExpiresAt ?? null : null,
+    privateUrl: t.private && !accessCtx && url ? `${url}/#key=${t.key}` : null,
+    access,
     versionId,
     deployedAt: (/* @__PURE__ */ new Date()).toISOString(),
     error: null
@@ -21961,9 +22073,20 @@ ${s.text.slice(-800)}`);
 ${r.text.slice(-800)}`);
   }
 }
-function deleteWorker(name) {
+async function deleteWorker(name) {
+  const notes = [];
+  const s = readState(name);
+  if (s?.access?.appId) {
+    try {
+      await deleteAccessApp(accessContext(), s.access.appId);
+      notes.push("access app deleted");
+    } catch (e) {
+      notes.push(`failed to delete access app: ${e.message}`);
+    }
+  }
   const r = runWrangler(["delete", "--name", name, "--force"], { cwd: path5.join(deployDir(name), "empty") });
-  return r.status === 0 ? "worker deleted" : `failed to delete worker: ${r.text.slice(-400)}`;
+  notes.unshift(r.status === 0 ? "worker deleted" : `failed to delete worker: ${r.text.slice(-400)}`);
+  return notes.join("; ");
 }
 
 // src/services/duration.ts
@@ -22013,8 +22136,19 @@ async function deploy(opts = {}) {
   const priv = opts.private === true || !opts.public;
   const backend = resolveBackend(opts.backend);
   const common = { name, mode: t.mode, root: t.root, file: t.file, private: priv };
-  if (backend === "workers")
-    return deployWorkers({ ...common, key: priv ? newKey() : null, keyExpiresAt: priv ? expiryFrom(opts.expires) : null });
+  if (opts.access?.length && backend !== "workers") {
+    throw new Error(
+      "--access (Cloudflare Access sign-in) works on the workers backend; sign in with `cloudfact login --token` and use --backend workers"
+    );
+  }
+  if (backend === "workers") {
+    return deployWorkers({
+      ...common,
+      key: priv ? newKey() : null,
+      keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
+      access: opts.access ?? null
+    });
+  }
   return deployTunnel({
     ...common,
     keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
@@ -22073,7 +22207,7 @@ async function remove(name) {
   if (!s) throw new Error(`deploy "${name}" does not exist`);
   let remote;
   if (s.backend === "tunnel") await stopTunnel(name);
-  if (s.backend === "workers" && s.status === "deployed") remote = deleteWorker(name);
+  if (s.backend === "workers" && s.status === "deployed") remote = await deleteWorker(name);
   removeDeployDir(name);
   return { name, removed: true, remote };
 }
@@ -22112,7 +22246,7 @@ async function doctor() {
 // src/mcp/tools/deploy.ts
 var deployTool = defineTool({
   name: "deploy",
-  description: 'Publish a folder (or a single .html file) from this machine to a public Cloudflare URL. "tunnel" backend (default when signed out): local static server + cloudflared quick tunnel, *.trycloudflare.com URL; the process runs in the background and outlives the session. "workers" backend (default when signed in): Cloudflare Workers with static assets, fixed URL https://<name>.<sub>.workers.dev; redeploying updates the same address. Idempotent on tunnel: if the same path is already live, returns the existing URL (reused=true). Deploys are PRIVATE by default on both backends (key-gated link; on workers a gate Worker runs in front of the files); pass public=true to publish openly. Returns JSON with url and, when private, privateUrl (already includes #key=...).',
+  description: 'Publish a folder (or a single .html file) from this machine to a public Cloudflare URL. "tunnel" backend (default when signed out): local static server + cloudflared quick tunnel, *.trycloudflare.com URL; the process runs in the background and outlives the session. "workers" backend (default when signed in): Cloudflare Workers with static assets, fixed URL https://<name>.<sub>.workers.dev; redeploying updates the same address. Idempotent on tunnel: if the same path is already live, returns the existing URL (reused=true). Deploys are PRIVATE by default on both backends (key-gated link; on workers a gate Worker runs in front of the files); pass public=true to publish openly. access=[emails] (workers backend, API-token login) puts Cloudflare Access in front instead: visitors sign in with a one-time email code and only listed emails get in. Returns JSON with url and, when private, privateUrl (already includes #key=...).',
   annotations: { title: "Publish static site", readOnlyHint: false, idempotentHint: true },
   schema: {
     path: external_exports.string().describe("Absolute path of the folder or .html file to publish"),
@@ -22120,6 +22254,7 @@ var deployTool = defineTool({
     public: external_exports.boolean().optional().describe("Publish without the key gate (default false: private)"),
     backend: external_exports.enum(["auto", "tunnel", "workers"]).optional().describe("auto = workers when signed in to Cloudflare, otherwise tunnel"),
     expires: external_exports.string().optional().describe('Private key lifetime, e.g. "30m", "24h", "7d" (default: never expires)'),
+    access: external_exports.array(external_exports.string()).optional().describe("Emails allowed to sign in through Cloudflare Access (identity gate instead of the key link; workers backend)"),
     restart: external_exports.boolean().optional().describe("Restart even if already live (yields a new URL on tunnel)")
   },
   handler: (params) => deploy(params)

@@ -34,6 +34,14 @@ interface DeployState {
     forwardPort?: number | null;
     sshPid?: number | null;
     files?: number;
+    /** Cloudflare Access app in front of this deploy (identity sign-in). */
+    access?: {
+        appId: string;
+        aud: string;
+        domain: string;
+        emails: string[];
+        teamDomain: string;
+    } | null;
     versionId?: string | null;
     deployedAt?: string;
 }
@@ -67,6 +75,8 @@ interface DeployOptions {
     private?: boolean;
     /** Key lifetime for private deploys, e.g. "30m", "24h", "7d". Default: no expiry. */
     expires?: string;
+    /** Emails allowed to sign in through Cloudflare Access (workers backend). Replaces the key gate. */
+    access?: string[];
     backend?: BackendChoice;
     restart?: boolean;
     timeoutMs?: number;
