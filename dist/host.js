@@ -490,7 +490,7 @@ function startSshForward(localPort) {
   if (identity) args.push("-i", identity);
   args.push(destination);
   const logFd = fs5.openSync(path5.join(dir, "ssh.log"), "a");
-  ssh = spawn("ssh", args, { stdio: ["ignore", logFd, logFd] });
+  ssh = spawn("ssh", args, { stdio: ["ignore", logFd, logFd], windowsHide: true });
   fs5.closeSync(logFd);
   patchState(name, { sshPid: ssh.pid ?? null });
   log.ts(`ssh forward 127.0.0.1:${localPort} \u2192 ${destination}:${initial.targetPort}`);
@@ -513,7 +513,8 @@ function startTunnel(port) {
   }
   const logFd = fs5.openSync(path5.join(dir, "tunnel.log"), "a");
   tunnel = spawn(bin, ["tunnel", "--url", `http://127.0.0.1:${port}`, "--no-autoupdate", "--protocol", "http2"], {
-    stdio: ["ignore", "pipe", "pipe"]
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true
   });
   patchState(name, { tunnelPid: tunnel.pid ?? null, url: null, privateUrl: null, status: "starting" });
   let found = false;

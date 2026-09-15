@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows: `cloudflared` and `ssh` run in a hidden console (`windowsHide`), so the tunnel host no longer opens a Windows Terminal window on every start or reconnect.
+
 ### Changed
 
 - README documents the Zero Trust Free limit for `--access`: 50 seats per Cloudflare account, shared by all deploys.
