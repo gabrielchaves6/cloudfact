@@ -9,19 +9,11 @@
   "homepage": "https://github.com/gabrielchaves6/cloudfact",
   "repository": "https://github.com/gabrielchaves6/cloudfact",
   "license": "MIT",
-  "keywords": [
-    "cloudflare",
-    "deploy",
-    "static",
-    "tunnel",
-    "mcp"
-  ],
+  "keywords": ["cloudflare", "deploy", "static", "tunnel", "mcp"],
   "mcpServers": {
     "cloudfact": {
       "command": "node",
-      "args": [
-        "${CLAUDE_PLUGIN_ROOT}/dist/server.js"
-      ]
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/server.js"]
     }
   }
 }
