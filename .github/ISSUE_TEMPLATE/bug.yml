@@ -1,0 +1,18 @@
+name: Bug report
+description: Something did not work
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes: { label: What happened?, description: Command or tool call, expected vs actual. }
+    validations: { required: true }
+  - type: textarea
+    id: doctor
+    attributes: { label: Output of `cloudfact doctor`, render: json }
+    validations: { required: true }
+  - type: textarea
+    id: logs
+    attributes: { label: Output of `cloudfact logs <name>` (if a deploy is involved), render: text }
+  - type: input
+    id: client
+    attributes: { label: Client, placeholder: Claude Code 2.x / Codex / Cursor / CLI }

@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { ZodRawShape, z } from 'zod';
 
 type Backend = 'tunnel' | 'workers';
 type BackendChoice = Backend | 'auto' | 'pages';
@@ -141,4 +142,20 @@ declare function doctor(): Promise<DoctorReport>;
 /** Monta o McpServer do cloudfact com todas as tools e o prompt. Transporte fica a cargo de quem chama. */
 declare function createServer(): McpServer;
 
-export { type Backend, type BackendChoice, type Credentials, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type StatusResult, VERSION, createServer, deploy, doctor, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, readLogs, remove, resolveBackend, status, stop, stopAll, summarize };
+interface ToolAnnotations {
+    title: string;
+    readOnlyHint: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+}
+interface ToolDefinition<Schema extends ZodRawShape = ZodRawShape> {
+    name: string;
+    description: string;
+    annotations: ToolAnnotations;
+    schema: Schema;
+    handler: (params: z.infer<z.ZodObject<Schema>>) => Promise<unknown>;
+}
+
+declare const tools: ToolDefinition<any>[];
+
+export { type Backend, type BackendChoice, type Credentials, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type StatusResult, type ToolDefinition, VERSION, createServer, deploy, doctor, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, readLogs, remove, resolveBackend, status, stop, stopAll, summarize, tools };

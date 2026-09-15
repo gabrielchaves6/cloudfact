@@ -13,10 +13,12 @@
     "format": "eslint --fix . && prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "npm run typecheck && npm run lint && npm run test && npm run build",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run build && npm run docs && npm run verify",
     "start": "node dist/server.js",
     "inspect": "npx @modelcontextprotocol/inspector node dist/server.js",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "docs": "node scripts/generate-docs.js",
+    "verify": "node scripts/verify-versions.js"
   },
   "license": "MIT",
   "engines": {
@@ -44,7 +46,8 @@
     "server.json",
     "install.sh",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "docs"
   ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
