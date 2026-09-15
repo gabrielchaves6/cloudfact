@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const client = new Client({ name: 'smoke', version: '0' });
-await client.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(root, 'src/server.js')] }));
+await client.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(root, 'dist/server.js')] }));
 const tools = (await client.listTools()).tools.map((t) => t.name);
 console.log('tools:', tools.join(', '));
 for (const need of ['deploy', 'list', 'status', 'stop', 'remove', 'logs', 'doctor']) if (!tools.includes(need)) throw new Error('faltou tool ' + need);

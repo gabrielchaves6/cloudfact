@@ -7,17 +7,28 @@ cloudfact deploy ./relatorio.html                    # → https://xxxx.trycloud
 cloudfact login --device && cloudfact deploy ./site  # → https://site.<sua-sub>.workers.dev      (URL fixa, sua conta)
 ```
 
-## Instalação (3 passos)
+## Instalar (plug and play)
 
-Requisito: Node 20+.
+**Claude Code**, dois comandos e pronto (skill `/cloudfact` + MCP, sem clone, sem `npm install`):
 
-```bash
-git clone https://github.com/gabrielchaves6/cloudfact ~/cloudfact
-~/cloudfact/install.sh        # deps, `cloudfact` no PATH, skill e MCP (Claude Code / Codex, se existirem)
-cloudfact doctor              # confere tudo
+```
+claude plugin marketplace add gabrielchaves6/cloudfact
+claude plugin install cloudfact@cloudfact
 ```
 
-O `cloudflared` é baixado sozinho no primeiro deploy (Linux/macOS, x64/arm64) para `~/.cloudfact/bin`. Se já tiver no PATH, usa o seu.
+**Tudo de uma vez** (CLI no PATH, plugin no Claude Code, skill + MCP no Codex), requer Node 20+ e git:
+
+```
+curl -fsSL https://raw.githubusercontent.com/gabrielchaves6/cloudfact/master/install.sh | bash
+```
+
+**Qualquer outro cliente MCP** (Cursor, Windsurf, Claude Desktop…): clone e aponte para o servidor empacotado, sem dependências:
+
+```json
+{ "mcpServers": { "cloudfact": { "command": "node", "args": ["/caminho/cloudfact/dist/server.js"] } } }
+```
+
+Sem login, já funciona pelo túnel rápido. O `cloudflared` é baixado sozinho no primeiro deploy (Linux/macOS, x64/arm64) para `~/.cloudfact/bin`; se já tiver no PATH, usa o seu.
 
 ## Autenticar na sua conta (opcional, para URL fixa)
 
@@ -50,18 +61,18 @@ Servidor stdio. Configuração genérica:
 ```json
 {
   "mcpServers": {
-    "cloudfact": { "command": "node", "args": ["/caminho/para/cloudfact/src/server.js"] }
+    "cloudfact": { "command": "node", "args": ["/caminho/para/cloudfact/dist/server.js"] }
   }
 }
 ```
 
-- Claude Code: `claude mcp add -s user cloudfact -- node /caminho/para/cloudfact/src/server.js`
-- Codex: `codex mcp add cloudfact -- node /caminho/para/cloudfact/src/server.js`
+- Claude Code: use o plugin (acima). Alternativa manual: `claude mcp add -s user cloudfact -- node /caminho/para/cloudfact/dist/server.js`
+- Codex: `codex mcp add cloudfact -- node /caminho/para/cloudfact/dist/server.js` e linke `skills/cloudfact` em `~/.codex/skills/`
 - Claude Desktop / Cursor / Windsurf: cole o JSON acima no arquivo de MCP do cliente.
 
 Tools: `deploy`, `list`, `status`, `stop`, `remove`, `logs`, `doctor`. Prompt: `cloudfact`. O login fica fora do MCP de propósito: rode `cloudfact login` no terminal para o token nunca passar pelo contexto do agente.
 
-Skill `/cloudfact <caminho> [--private] [--name x] [--tunnel|--workers]` em `skill/SKILL.md`; o `install.sh` a linka em `~/.claude/skills` e `~/.codex/skills`.
+Skill `/cloudfact <caminho> [--private] [--name x] [--tunnel|--workers]` em `skills/cloudfact/SKILL.md`, entregue pelo plugin no Claude Code e linkada em `~/.codex/skills` pelo `install.sh`.
 
 ## CLI
 
@@ -75,9 +86,9 @@ cloudfact mcp                     # servidor MCP via stdio
 
 Estado: `~/.cloudfact/deploys/<nome>/` (`state.json`, `host.log`, `tunnel.log`, `wrangler.log`). Outro diretório: `CLOUDFACT_HOME=/x`.
 
-## Teste
+## Desenvolvimento
 
-`npm test` sobe o MCP, lista as tools e chama `doctor`/`list`.
+`npm run build` empacota `src/` em `dist/` (esbuild, sem dependências em runtime; `dist/` é versionado para o plugin funcionar direto do git). `npm test` faz o build, sobe o MCP e chama as tools.
 
 ## Roadmap
 
@@ -85,3 +96,4 @@ Estado: `~/.cloudfact/deploys/<nome>/` (`state.json`, `host.log`, `tunnel.log`, 
 - [ ] `--private` também no backend workers (worker mínimo checando cookie).
 - [ ] Túnel nomeado (URL fixa no seu domínio).
 - [ ] Publicar no npm (`npx cloudfact`).
+- [ ] Modo HTTP do MCP para conectores remotos (claude.ai web).

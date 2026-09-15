@@ -1,14 +1,16 @@
 {
   "name": "cloudfact",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP + CLI para publicar páginas estáticas da VM na Cloudflare (túnel rápido ou Pages) com um comando.",
   "type": "module",
   "bin": {
-    "cloudfact": "bin/cloudfact.js"
+    "cloudfact": "dist/cloudfact.js"
   },
   "scripts": {
-    "start": "node src/server.js",
-    "test": "node test/smoke.js"
+    "build": "node build.js",
+    "start": "node dist/server.js",
+    "test": "npm run build && node test/smoke.js",
+    "prepare": "node build.js"
   },
   "license": "MIT",
   "engines": {
@@ -17,5 +19,19 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^3.25.76"
-  }
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  },
+  "files": [
+    "dist",
+    "src",
+    "bin",
+    "skills",
+    ".claude-plugin",
+    
+    "install.sh",
+    "README.md",
+    "LICENSE"
+  ]
 }
