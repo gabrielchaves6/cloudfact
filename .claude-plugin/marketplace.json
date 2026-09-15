@@ -12,7 +12,7 @@
       "name": "cloudfact",
       "source": "./",
       "description": "Publish an HTML file or a folder to a public Cloudflare URL with /cloudfact.",
-      "version": "0.3.2",
+      "version": "0.3.3",
       "category": "deployment"
     }
   ]
