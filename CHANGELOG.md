@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-15
+
+### Added
+
+- `deploy --access <emails>` (workers backend): Cloudflare Access sign-in in front of the site with a one-time email code, no domain required. cloudfact creates the Zero Trust team and the one-time PIN provider on first use, one Access application per deploy (updated on redeploy, deleted on `remove`), and the generated Worker fails closed when a request did not come through Access. Requires `cloudfact login --token` with Access permissions.
+
 ## [0.6.0] - 2026-09-15
 
 ### Security

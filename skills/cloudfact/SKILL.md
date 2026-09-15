@@ -27,6 +27,7 @@ If the argument starts with `expose`, or the user wants to publish something tha
 2. **Publish** with the `deploy` tool:
    - `path`: absolute path.
    - Deploys are private by default (key-gated link). Pass `public: true` only when the user explicitly asks for an open page. `expires` (e.g. `"24h"`) for temporary links.
+   - When the user wants sign-in by identity ("only me", "only these people", "login"), use `access: [emails]` with `backend: "workers"`. It needs an API-token login; if `doctor` shows `source: "wrangler"`, explain the token steps from the error message instead of asking for the token in chat.
    - `name`: from `--name`, otherwise keep the default.
    - `backend`: `"tunnel"` for `--tunnel`, `"workers"` for `--workers`; otherwise `auto` (workers with a fixed URL when signed in, quick tunnel otherwise; `doctor` shows which).
    - `restart: true` for `--restart`.

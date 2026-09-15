@@ -74,7 +74,18 @@ cloudfact rotate report                             # new key now; old link and 
 cloudfact rotate report --expires 2h                # new key with a lifetime
 ```
 
-`rotate` works on a live deploy without restarting it (on the tunnel backend it also turns a public deploy private). On the `workers` backend the gate is a tiny generated Worker running in front of the files (`run_worker_first`), the key is a Worker secret, and rate limiting uses Cloudflare's rate-limit binding. For identity-based access (one-time email code, Google…) see `--access` below.
+`rotate` works on a live deploy without restarting it (on the tunnel backend it also turns a public deploy private). On the `workers` backend the gate is a tiny generated Worker running in front of the files (`run_worker_first`), the key is a Worker secret, and rate limiting uses Cloudflare's rate-limit binding.
+
+## Identity sign-in with Cloudflare Access (no domain needed)
+
+A private link is still a bearer link. For real identity, put Cloudflare Access in front of a `workers` deploy: visitors get a Cloudflare sign-in page, enter a one-time code sent to their email, and only the emails you list get in. Works on `*.workers.dev`, so you do not need to own a domain.
+
+```
+cloudfact login --token <api-token>                        # once; the browser login has no Access scopes
+cloudfact deploy ./site --access you@example.com,ana@x.com  # → https://site.<sub>.workers.dev, sign-in required
+```
+
+The API token needs the "Edit Cloudflare Workers" template plus **Access: Apps and Policies — Edit** and **Access: Organizations, Identity Providers, and Groups — Edit**. cloudfact creates the Zero Trust team (`<team>.cloudflareaccess.com`) and the one-time PIN provider on first use, then one self-hosted Access application per deploy, updated in place on redeploy and deleted by `remove`. The generated Worker refuses any request that did not come through Access (`ctx.access`), so a misconfigured policy fails closed instead of open.
 
 Local server safety: serves only what is inside the published folder, never dotfiles, no path traversal. A single `.html` is served alone (relative assets are not included; publish the folder in that case).
 
@@ -136,7 +147,8 @@ CI fails if `dist/` or `docs/tools.md` are stale, or if the version differs acro
 
 ## Roadmap
 
-- [ ] Cloudflare Access: named tunnel on your own domain + identity-based sign-in (Google, one-time email code) in front of any deploy.
+- [ ] Cloudflare Access on the tunnel backend (needs a domain of your own + named tunnel).
+- [ ] Other identity providers (Google, GitHub) for Access besides the one-time PIN.
 - [ ] `cloudfact run`: rsync a project to an SSH host, start it there, and expose it in one step.
 - [ ] `--private` on the workers backend (minimal worker checking the cookie).
 - [ ] Named tunnel (fixed URL on your own domain).

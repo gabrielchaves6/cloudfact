@@ -53,8 +53,19 @@ export async function deploy(opts: DeployOptions = {}): Promise<DeployResult> {
   const priv = opts.private === true || !opts.public;
   const backend = resolveBackend(opts.backend);
   const common = { name, mode: t.mode, root: t.root, file: t.file, private: priv };
-  if (backend === 'workers')
-    return deployWorkers({ ...common, key: priv ? newKey() : null, keyExpiresAt: priv ? expiryFrom(opts.expires) : null });
+  if (opts.access?.length && backend !== 'workers') {
+    throw new Error(
+      '--access (Cloudflare Access sign-in) works on the workers backend; sign in with `cloudfact login --token` and use --backend workers',
+    );
+  }
+  if (backend === 'workers') {
+    return deployWorkers({
+      ...common,
+      key: priv ? newKey() : null,
+      keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
+      access: opts.access ?? null,
+    });
+  }
   return deployTunnel({
     ...common,
     keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
@@ -125,7 +136,7 @@ export async function remove(name: string): Promise<{ name: string; removed: tru
   if (!s) throw new Error(`deploy "${name}" does not exist`);
   let remote: string | undefined;
   if (s.backend === 'tunnel') await stopTunnel(name);
-  if (s.backend === 'workers' && s.status === 'deployed') remote = deleteWorker(name);
+  if (s.backend === 'workers' && s.status === 'deployed') remote = await deleteWorker(name);
   removeDeployDir(name);
   return { name, removed: true, remote };
 }

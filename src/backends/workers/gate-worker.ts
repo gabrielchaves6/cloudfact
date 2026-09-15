@@ -2,7 +2,8 @@
  * Source of the gate Worker deployed in front of static assets when a Workers deploy is private.
  * Same contract as the tunnel gate: `#key=` in the link → POST /api/session → HttpOnly cookie.
  * The key lives in the CLOUDFACT_KEY secret; optional expiry in the CLOUDFACT_KEY_EXPIRES var.
- * Fails closed: without a key configured, every request gets 503.
+ * Access mode (CLOUDFACT_ACCESS=1): the request must have been authenticated by Cloudflare Access
+ * (ctx.access present); otherwise 403. Fails closed: without a key or access configured, every request gets 503.
  */
 import { GATE_HTML } from '../tunnel/gate.js';
 
@@ -26,7 +27,15 @@ const reply = (status, body, headers) =>
   new Response(body, { status, headers: { 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...headers } });
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
+    if (env.CLOUDFACT_ACCESS === '1') {
+      if (!ctx || !ctx.access) return reply(403, 'cloudfact: this site is protected by Cloudflare Access; the request did not come through it', { 'content-type': 'text/plain' });
+      const res = await env.ASSETS.fetch(request);
+      const out = new Response(res.body, res);
+      out.headers.set('cache-control', 'private, no-cache');
+      out.headers.set('x-robots-tag', 'noindex, nofollow');
+      return out;
+    }
     const key = env.CLOUDFACT_KEY;
     if (!key) return reply(503, 'cloudfact: key not configured', { 'content-type': 'text/plain' });
     const expired = env.CLOUDFACT_KEY_EXPIRES ? Date.parse(env.CLOUDFACT_KEY_EXPIRES) <= Date.now() : false;

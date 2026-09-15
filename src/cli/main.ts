@@ -4,7 +4,7 @@ import * as cf from '../cloudfact.js';
 const HELP = `cloudfact ${cf.VERSION} — publish static pages from this machine to Cloudflare
 
 usage:
-  cloudfact deploy [path] [--name n] [--public] [--expires 24h] [--backend auto|tunnel|workers] [--restart] [--json]
+  cloudfact deploy [path] [--name n] [--public] [--expires 24h] [--access a@x.com,b@y.com] [--backend auto|tunnel|workers] [--restart] [--json]
   cloudfact expose <port> [--name n] [--public] [--expires 24h] [--ssh user@host] [--ssh-port 22] [--identity key] [--strict-host-key] [--restart] [--json]
   cloudfact rotate <name> [--expires 24h]
   cloudfact list [--json]
@@ -46,6 +46,7 @@ export async function main(argv: string[]): Promise<number> {
       public: { type: 'boolean', default: false },
       expires: { type: 'string' },
       'strict-host-key': { type: 'boolean', default: false },
+      access: { type: 'string' },
     },
   });
   const [cmd, ...rest] = positionals;
@@ -67,6 +68,7 @@ export async function main(argv: string[]): Promise<number> {
         public: values.public,
         private: values.private,
         expires: values.expires,
+        access: values.access ? values.access.split(',') : undefined,
         backend: values.backend as cf.BackendChoice,
         restart: values.restart,
       });
@@ -74,6 +76,7 @@ export async function main(argv: string[]): Promise<number> {
       else {
         console.log(`${r.reused ? 'already live' : 'published'}: ${r.name} (${r.backend})`);
         console.log(`URL: ${r.privateUrl ?? r.url}`);
+        if (r.access) console.log(`access: sign-in required (${r.access.emails.join(', ')}) via ${r.access.teamDomain}`);
         if (r.local) console.log(`local: ${r.local}`);
       }
       return 0;

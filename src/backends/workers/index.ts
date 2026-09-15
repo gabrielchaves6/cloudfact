@@ -5,6 +5,7 @@ import { readConfig } from '../../config.js';
 import { deployDir, readState, summarize, writeState } from '../../services/state.js';
 import { credentials, runWrangler } from '../../services/wrangler.js';
 import { WORKER_SOURCE, wranglerConfig } from './gate-worker.js';
+import { accessContext, deleteAccessApp, upsertAccessApp } from '../../services/access.js';
 import type { DeployMode, DeployResult } from '../../types.js';
 
 export interface WorkersTarget {
@@ -15,6 +16,8 @@ export interface WorkersTarget {
   private: boolean;
   key?: string | null;
   keyExpiresAt?: string | null;
+  /** Emails allowed through Cloudflare Access; when set, identity replaces the key gate. */
+  access?: string[] | null;
 }
 
 /** Copies `src` into `dst` skipping dotfiles, node_modules and symlinks. Returns the file count. */
@@ -79,7 +82,19 @@ export async function deployWorkers(t: WorkersTarget): Promise<DeployResult> {
   const compatibilityDate = new Date().toISOString().slice(0, 10);
   const logFile = path.join(dir, 'wrangler.log');
   let r;
-  if (t.private) {
+  const accessCtx = t.access?.length ? accessContext(cfg) : null; // validates the token before touching anything
+  if (accessCtx) {
+    const workerDir = path.join(dir, 'worker');
+    fs.mkdirSync(workerDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(path.join(workerDir, 'index.js'), WORKER_SOURCE);
+    fs.writeFileSync(path.join(workerDir, 'wrangler.jsonc'), wranglerConfig(t.name, compatibilityDate));
+    r = runWrangler(['deploy', '--config', path.join(workerDir, 'wrangler.jsonc'), '--var', 'CLOUDFACT_ACCESS:1'], {
+      cfg,
+      creds,
+      cwd: workerDir,
+      logFile,
+    });
+  } else if (t.private) {
     // gate worker in front of the assets (run_worker_first); key delivered as a secret after the deploy
     const workerDir = path.join(dir, 'worker');
     fs.mkdirSync(workerDir, { recursive: true, mode: 0o700 });
@@ -104,14 +119,19 @@ export async function deployWorkers(t: WorkersTarget): Promise<DeployResult> {
     throw new Error(`wrangler deploy failed:\n${r.text.slice(-1500)}`);
   }
   const url = (r.text.match(/https:\/\/[a-z0-9.-]+\.workers\.dev/g) ?? []).find((u) => u.includes(`//${t.name}.`)) ?? null;
+  let access = null;
+  if (accessCtx && url) {
+    access = await upsertAccessApp(accessCtx, { name: t.name, domain: new URL(url).host, emails: t.access! });
+  }
   const versionId = r.text.match(/Version ID:\s*([0-9a-f-]+)/)?.[1] ?? null;
   const state = {
     ...readState(t.name)!,
     status: 'deployed' as const,
     url,
-    key: t.private ? t.key : null,
-    keyExpiresAt: t.private ? (t.keyExpiresAt ?? null) : null,
-    privateUrl: t.private && url ? `${url}/#key=${t.key}` : null,
+    key: t.private && !accessCtx ? t.key : null,
+    keyExpiresAt: t.private && !accessCtx ? (t.keyExpiresAt ?? null) : null,
+    privateUrl: t.private && !accessCtx && url ? `${url}/#key=${t.key}` : null,
+    access,
     versionId,
     deployedAt: new Date().toISOString(),
     error: null,
@@ -144,8 +164,19 @@ export function rotateWorkersKey(name: string, key: string, keyExpiresAt: string
   }
 }
 
-/** Deletes the worker on Cloudflare. Returns a one-line outcome. */
-export function deleteWorker(name: string): string {
+/** Deletes the worker (and its Access app, if any) on Cloudflare. Returns a one-line outcome. */
+export async function deleteWorker(name: string): Promise<string> {
+  const notes: string[] = [];
+  const s = readState(name);
+  if (s?.access?.appId) {
+    try {
+      await deleteAccessApp(accessContext(), s.access.appId);
+      notes.push('access app deleted');
+    } catch (e) {
+      notes.push(`failed to delete access app: ${(e as Error).message}`);
+    }
+  }
   const r = runWrangler(['delete', '--name', name, '--force'], { cwd: path.join(deployDir(name), 'empty') });
-  return r.status === 0 ? 'worker deleted' : `failed to delete worker: ${r.text.slice(-400)}`;
+  notes.unshift(r.status === 0 ? 'worker deleted' : `failed to delete worker: ${r.text.slice(-400)}`);
+  return notes.join('; ');
 }

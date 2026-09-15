@@ -40,6 +40,9 @@ export interface Config {
   cloudflaredPath?: string;
   wranglerCommand?: string;
   loggedInAt?: string;
+  /** Zero Trust team name / auth domain used for Cloudflare Access. */
+  cloudflareTeam?: string;
+  cloudflareTeamDomain?: string;
 }
 
 export function readConfig(): Config {
