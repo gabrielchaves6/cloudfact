@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
-## [0.7.3] - 2026-09-15
+## [0.7.4] - 2026-09-15
 
 ### Fixed
 
@@ -23,6 +23,12 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Changed
 
 - Cloudflare Access (`deploy --access`) verified end-to-end on a real Cloudflare account: team, one-time PIN provider and application created through the API with no Zero Trust checkout, and the `*.workers.dev` URL redirects to the team sign-in page. Docs updated accordingly.
+
+## [0.7.3] - 2026-09-15
+
+### Fixed
+
+- `tunnel` backend on Windows: cloudflared and ssh no longer open a console window.
 
 ## [0.7.0] - 2026-09-15
 
