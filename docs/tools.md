@@ -46,7 +46,7 @@ No parameters.
 
 ## `catalog` — Account catalog
 
-Every cloudfact in the user's Cloudflare account, grouped by project, as the account itself sees them (so deploys made from another machine show up too). Each entry says whether it is public, a private key link or behind Cloudflare Access sign-in, and whether it serves static files or an app with its own server. Quick tunnels have no account-side resource and appear only when this machine still has their record (inAccount=false). publish=true turns the catalog into a browsable page and returns its URL.
+Every cloudfact in the user's Cloudflare account, grouped by project, as the account itself sees them (so deploys made from another machine show up too). Each entry says whether it is public, a private key link or behind Cloudflare Access sign-in, and whether it serves static files or an app with its own server. Quick tunnels have no account-side resource and appear only when this machine still has their record (inAccount=false). publish=true turns the catalog into a browsable page and returns its URL; that page asks for Cloudflare Access sign-in by default, for the email that owns the account.
 
 _mutating_
 
@@ -54,7 +54,7 @@ _mutating_
 | --- | --- | --- | --- |
 | `project` | string | no | Only deploys filed under this project |
 | `publish` | boolean | no | Publish the catalog as a page and return its URL |
-| `access` | array | no | With publish: emails allowed to sign in to the catalog page |
+| `access` | array | no | With publish: emails allowed to sign in to the catalog page (default: the account owner) |
 
 ## `project` — Set project
 

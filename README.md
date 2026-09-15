@@ -111,9 +111,12 @@ Each entry says what the deploy is and who can open it: **Public**, **Private li
 **Sign-in** (Cloudflare Access), and **Static** (files served by Cloudflare) or **Server app** (an app
 with its own server behind the proxy). Quick tunnels have no account-side resource, so they show up only
 while the machine that started them still has the record, flagged `local tunnel`. `--publish` deploys the
-catalog as a page with a card per deploy, a live preview of the public ones, search, a list view and a
-filter per project. It is private by default like any other deploy; add `--access you@example.com` to put
-sign-in in front of it. MCP tools: `catalog`, `project`.
+catalog as a page with a card per deploy, search, a list view and a filter per project. Each card shows a
+real thumbnail, captured when the catalog is published from whatever this machine can already read: the
+published folder, the app's own port, or the URL with its private key. Thumbnails render with scripts off
+in a sandboxed frame, and a deploy this machine cannot see falls back to a monogram. The page is an index of everything you host, so it asks for
+Cloudflare Access sign-in by default, for the email that owns the account; pass `--access` to choose who
+else gets in, or `--public` to opt out. MCP tools: `catalog`, `project`.
 
 ## MCP
 

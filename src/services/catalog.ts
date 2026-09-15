@@ -213,6 +213,17 @@ export async function catalog(opts: { project?: string; fetchImpl?: typeof fetch
   };
 }
 
+/** Email of whoever is signed in, used to put Access in front of the catalog page without asking. */
+export async function accountEmail(fetchImpl?: typeof fetch): Promise<string | null> {
+  const b = bearer();
+  if (!b) return null;
+  try {
+    return (await api<{ email?: string }>(b.token, 'GET', '/user', undefined, fetchImpl)).email ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** Files an existing deploy under a project (or clears it with null), without redeploying. */
 export async function setProject(name: string, project: string | null, fetchImpl?: typeof fetch): Promise<CatalogEntry> {
   const b = bearer();

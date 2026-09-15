@@ -194,8 +194,11 @@ declare function deploy(opts?: DeployOptions): Promise<DeployResult>;
 declare function expose(opts: ExposeOptions): Promise<DeployResult>;
 /**
  * Publishes the catalog itself: a page with one card per cloudfact in the account, grouped by project,
- * showing whether each is public, key-gated or behind sign-in, and static or a server app. Private by
- * default, like every other deploy.
+ * showing whether each is public, key-gated or behind sign-in, and static or a server app.
+ *
+ * The page is an index of everything you host, so it asks for identity by default: without an explicit
+ * list, Cloudflare Access is put in front of it for the email that owns the account. It falls back to a
+ * private key link only when that email cannot be determined, and `public: true` still opts out.
  */
 declare function publishCatalog(opts?: {
     name?: string;

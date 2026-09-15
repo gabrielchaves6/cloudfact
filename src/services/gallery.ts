@@ -23,8 +23,9 @@ h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:22px}
 .card{background:#141414;border:1px solid #262626;border-radius:12px;overflow:hidden;text-decoration:none;color:inherit;display:flex;flex-direction:column;transition:border-color .15s,transform .15s}
 .card:hover{border-color:#3d3d3d;transform:translateY(-2px)}
-.shot{height:172px;background:#0a0a0a;border-bottom:1px solid #1f1f1f;position:relative;overflow:hidden}
-.shot iframe{width:1280px;height:820px;border:0;transform:scale(.216);transform-origin:top left;pointer-events:none;background:#fff}
+.shot{height:176px;background:#0a0a0a;border-bottom:1px solid #1f1f1f;position:relative;overflow:hidden}
+/* rendered at desktop width and shrunk to the card: --s is refined per card on load and on resize */
+.shot iframe{width:1280px;height:900px;border:0;transform:scale(var(--s,.24));transform-origin:top left;pointer-events:none;background:#fff}
 .shot .fallback{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:radial-gradient(120% 100% at 50% 0%,#1d1d1d 0%,#121212 70%);color:#6d6d6d}
 .shot .mono{width:52px;height:52px;border-radius:13px;background:#232323;border:1px solid #303030;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:600;color:#c9c9c9;text-transform:uppercase}
 .shot .why{font-size:12px;letter-spacing:.02em}
@@ -62,6 +63,11 @@ const VIS_LABEL = { public: 'Public', private: 'Private link', access: 'Sign-in'
 const KIND_LABEL = { static: 'Static', app: 'Server app' };
 
 const SCRIPT = `
+const fit = () => {
+  for (const shot of document.querySelectorAll('.shot')) shot.style.setProperty('--s', (shot.clientWidth / 1280).toFixed(4));
+};
+fit();
+addEventListener('resize', fit);
 const rel = (iso) => {
   if (!iso) return 'never published';
   const d = (Date.now() - Date.parse(iso)) / 1000;
@@ -101,25 +107,29 @@ view.addEventListener('click', () => {
   try { localStorage.setItem('cloudfact-view', list ? 'list' : 'grid'); } catch {}
 });
 try { if (localStorage.getItem('cloudfact-view') === 'list') view.click(); } catch {}
+fit();
 `;
 
 const esc = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 /** Self-contained page: no build step, no network beyond the previews themselves. */
-export function galleryHtml(c: CatalogResult, opts: { title?: string } = {}): string {
+export function galleryHtml(c: CatalogResult, opts: { title?: string; snapshots?: Record<string, string> } = {}): string {
   const title = opts.title ?? 'Cloudfacts';
   const projects = c.projects.map((p) => p.project).filter((p): p is string => Boolean(p));
   const total = c.projects.reduce((n, p) => n + p.deploys.length, 0);
 
   const card = (d: CatalogResult['projects'][number]['deploys'][number]): string => {
     const where = d.url ? esc(d.url) : '';
-    // only a public static page renders in a frame: anything gated shows its own sign-in instead
-    const preview =
-      d.url && d.visibility === 'public' && d.kind === 'static'
+    // a snapshot taken at publish time (scripts off) shows the real page even when a gate guards it;
+    // a site open to everyone can simply be framed live; anything else falls back to a monogram
+    const snap = opts.snapshots?.[d.name];
+    const preview = snap
+      ? `<iframe srcdoc="${esc(snap)}" loading="lazy" tabindex="-1" sandbox="" title=""></iframe>`
+      : d.url && d.visibility === 'public'
         ? `<iframe src="${where}" loading="lazy" tabindex="-1" sandbox="allow-scripts" title=""></iframe>`
         : `<div class="fallback"><div class="mono">${esc(d.name.slice(0, 2))}</div><div class="why">${
-            d.visibility === 'access' ? 'sign-in required' : d.visibility === 'private' ? 'private link' : 'no preview'
+            d.visibility === 'access' ? 'sign-in required' : d.visibility === 'private' ? 'private link' : 'not reachable from here'
           }</div></div>`;
     const badge = d.inAccount ? '' : '<span class="tag">local tunnel</span>';
     const search = [d.name, d.project ?? '', d.url ?? '', VIS_LABEL[d.visibility], KIND_LABEL[d.kind]].join(' ').toLowerCase();

@@ -5,8 +5,9 @@ import { HOME, VERSION, readConfig } from './config.js';
 import { deployTunnel, newKey, stopTunnel } from './backends/tunnel/index.js';
 import { rotateWorkersKey } from './backends/workers/index.js';
 import { expiryFrom } from './services/duration.js';
-import { catalog as readCatalog } from './services/catalog.js';
+import { accountEmail, catalog as readCatalog } from './services/catalog.js';
 import { galleryHtml } from './services/gallery.js';
+import { snapshots } from './services/snapshot.js';
 import { deleteWorker, deployWorkers } from './backends/workers/index.js';
 import { cloudflaredVersion, findCloudflared } from './services/cloudflared.js';
 import { effectiveState, isLive, listDeploys, readState, removeDeployDir, slug, summarize, writeState } from './services/state.js';
@@ -104,21 +105,30 @@ export async function expose(opts: ExposeOptions): Promise<DeployResult> {
 
 /**
  * Publishes the catalog itself: a page with one card per cloudfact in the account, grouped by project,
- * showing whether each is public, key-gated or behind sign-in, and static or a server app. Private by
- * default, like every other deploy.
+ * showing whether each is public, key-gated or behind sign-in, and static or a server app.
+ *
+ * The page is an index of everything you host, so it asks for identity by default: without an explicit
+ * list, Cloudflare Access is put in front of it for the email that owns the account. It falls back to a
+ * private key link only when that email cannot be determined, and `public: true` still opts out.
  */
 export async function publishCatalog(
   opts: { name?: string; project?: string; access?: string[]; public?: boolean; title?: string } = {},
 ): Promise<DeployResult> {
   const c = await readCatalog();
+  const access = opts.access ?? (opts.public ? undefined : ((await accountEmail()) ?? undefined));
+  const states = new Map(listDeploys().map((s) => [s.name, s]));
+  const shots = await snapshots(
+    c.projects.flatMap((p) => p.deploys).map((d) => ({ name: d.name, url: d.url, visibility: d.visibility })),
+    states,
+  );
   const dir = path.join(HOME, 'catalog');
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(path.join(dir, 'index.html'), galleryHtml(c, { title: opts.title }));
+  fs.writeFileSync(path.join(dir, 'index.html'), galleryHtml(c, { title: opts.title, snapshots: shots }));
   return deploy({
     path: dir,
     name: opts.name ?? 'cloudfacts',
     project: opts.project ?? 'cloudfact',
-    access: opts.access,
+    access: access ? [access].flat() : undefined,
     public: opts.public,
     backend: 'workers',
   });

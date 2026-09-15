@@ -3258,8 +3258,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path8) {
-      let input = path8;
+    function removeDotSegments(path9) {
+      let input = path9;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3668,8 +3668,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path8 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path8 && path8 !== "/" ? path8 : void 0;
+        const path9 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path9 && path9 !== "/" ? path9 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -7181,12 +7181,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs8, exportName) {
+    function addFormats(ajv, list, fs9, exportName) {
       var _a;
       var _b;
       (_a = (_b = ajv.opts.code).formats) !== null && _a !== void 0 ? _a : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs8[f]);
+        ajv.addFormat(f, fs9[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -7392,10 +7392,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path8) {
-  if (!path8)
+function getElementAtPath(obj, path9) {
+  if (!path9)
     return obj;
-  return path8.reduce((acc, key) => acc?.[key], obj);
+  return path9.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -7715,11 +7715,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path8, issues) {
+function prefixIssues(path9, issues) {
   return issues.map((iss) => {
     var _a;
     (_a = iss).path ?? (_a.path = []);
-    iss.path.unshift(path8);
+    iss.path.unshift(path9);
     return iss;
   });
 }
@@ -13808,8 +13808,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path8, errorMaps, issueData } = params;
-  const fullPath = [...path8, ...issueData.path || []];
+  const { data, path: path9, errorMaps, issueData } = params;
+  const fullPath = [...path9, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -13925,11 +13925,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path8, key) {
+  constructor(parent, value, path9, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path8;
+    this._path = path9;
     this._key = key;
   }
   get path() {
@@ -17501,11 +17501,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path8) {
-  if (path8.length === 0) {
+function getDotPath(path9) {
+  if (path9.length === 0) {
     return "object root";
   }
-  return path8.reduce((acc, seg, index) => {
+  return path9.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -21479,8 +21479,8 @@ function errorResult(err) {
 }
 
 // src/cloudfact.ts
-import fs7 from "fs";
-import path7 from "path";
+import fs8 from "fs";
+import path8 from "path";
 
 // src/backends/tunnel/index.ts
 import crypto from "crypto";
@@ -21936,8 +21936,8 @@ var API = "https://api.cloudflare.com/client/v4";
 var ACCESS_TOKEN_HELP = 'Cloudflare Access needs an API token (the browser login has no Access scopes). Create one at https://dash.cloudflare.com/profile/api-tokens \u2192 Create Token \u2192 template "Edit Cloudflare Workers" \u2192 add permissions "Access: Apps and Policies \u2014 Edit" and "Access: Organizations, Identity Providers, and Groups \u2014 Edit" \u2192 then run: cloudfact login --token <token>';
 function apiClient(token, fetchImpl = fetch) {
   return {
-    async request(method, path8, body) {
-      const res = await fetchImpl(API + path8, {
+    async request(method, path9, body) {
+      const res = await fetchImpl(API + path9, {
         method,
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: body === void 0 ? void 0 : JSON.stringify(body)
@@ -21949,7 +21949,7 @@ function apiClient(token, fetchImpl = fetch) {
       }
       if (!res.ok || env?.success === false) {
         const msg = env?.errors?.map((e) => `${e.code}: ${e.message}`).join("; ") || `HTTP ${res.status}`;
-        throw new Error(`Cloudflare API ${method} ${path8} failed \u2014 ${msg}`);
+        throw new Error(`Cloudflare API ${method} ${path9} failed \u2014 ${msg}`);
       }
       return env.result;
     }
@@ -22054,8 +22054,8 @@ function bearer(cfg = readConfig()) {
   if (oauth) return { token: oauth, accountId: creds?.accountId ?? cfg.cloudflareAccountId ?? null };
   return null;
 }
-async function api(token, method, path8, body, fetchImpl = fetch) {
-  const res = await fetchImpl(API2 + path8, {
+async function api(token, method, path9, body, fetchImpl = fetch) {
+  const res = await fetchImpl(API2 + path9, {
     method,
     headers: { Authorization: `Bearer ${token}`, ...body === void 0 ? {} : { "Content-Type": "application/json" } },
     body: body === void 0 ? void 0 : JSON.stringify(body)
@@ -22067,7 +22067,7 @@ async function api(token, method, path8, body, fetchImpl = fetch) {
   }
   if (!res.ok || env?.success === false) {
     const msg = env?.errors?.map((e) => `${e.code}: ${e.message}`).join("; ") || `HTTP ${res.status}`;
-    throw new Error(`Cloudflare API ${method} ${path8} failed \u2014 ${msg}`);
+    throw new Error(`Cloudflare API ${method} ${path9} failed \u2014 ${msg}`);
   }
   return env.result;
 }
@@ -22154,6 +22154,15 @@ async function catalog(opts = {}) {
     subdomain,
     projects: names.map((p) => ({ project: p || null, deploys: kept.filter((e) => (e.project ?? "") === p) }))
   };
+}
+async function accountEmail(fetchImpl) {
+  const b = bearer();
+  if (!b) return null;
+  try {
+    return (await api(b.token, "GET", "/user", void 0, fetchImpl)).email ?? null;
+  } catch {
+    return null;
+  }
 }
 async function setProject(name, project, fetchImpl) {
   const b = bearer();
@@ -22381,8 +22390,9 @@ h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:22px}
 .card{background:#141414;border:1px solid #262626;border-radius:12px;overflow:hidden;text-decoration:none;color:inherit;display:flex;flex-direction:column;transition:border-color .15s,transform .15s}
 .card:hover{border-color:#3d3d3d;transform:translateY(-2px)}
-.shot{height:172px;background:#0a0a0a;border-bottom:1px solid #1f1f1f;position:relative;overflow:hidden}
-.shot iframe{width:1280px;height:820px;border:0;transform:scale(.216);transform-origin:top left;pointer-events:none;background:#fff}
+.shot{height:176px;background:#0a0a0a;border-bottom:1px solid #1f1f1f;position:relative;overflow:hidden}
+/* rendered at desktop width and shrunk to the card: --s is refined per card on load and on resize */
+.shot iframe{width:1280px;height:900px;border:0;transform:scale(var(--s,.24));transform-origin:top left;pointer-events:none;background:#fff}
 .shot .fallback{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:radial-gradient(120% 100% at 50% 0%,#1d1d1d 0%,#121212 70%);color:#6d6d6d}
 .shot .mono{width:52px;height:52px;border-radius:13px;background:#232323;border:1px solid #303030;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:600;color:#c9c9c9;text-transform:uppercase}
 .shot .why{font-size:12px;letter-spacing:.02em}
@@ -22414,6 +22424,11 @@ var ICON = {
 var VIS_LABEL = { public: "Public", private: "Private link", access: "Sign-in" };
 var KIND_LABEL = { static: "Static", app: "Server app" };
 var SCRIPT = `
+const fit = () => {
+  for (const shot of document.querySelectorAll('.shot')) shot.style.setProperty('--s', (shot.clientWidth / 1280).toFixed(4));
+};
+fit();
+addEventListener('resize', fit);
 const rel = (iso) => {
   if (!iso) return 'never published';
   const d = (Date.now() - Date.parse(iso)) / 1000;
@@ -22453,6 +22468,7 @@ view.addEventListener('click', () => {
   try { localStorage.setItem('cloudfact-view', list ? 'list' : 'grid'); } catch {}
 });
 try { if (localStorage.getItem('cloudfact-view') === 'list') view.click(); } catch {}
+fit();
 `;
 var esc2 = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 function galleryHtml(c, opts = {}) {
@@ -22461,7 +22477,8 @@ function galleryHtml(c, opts = {}) {
   const total = c.projects.reduce((n, p) => n + p.deploys.length, 0);
   const card = (d) => {
     const where = d.url ? esc2(d.url) : "";
-    const preview = d.url && d.visibility === "public" && d.kind === "static" ? `<iframe src="${where}" loading="lazy" tabindex="-1" sandbox="allow-scripts" title=""></iframe>` : `<div class="fallback"><div class="mono">${esc2(d.name.slice(0, 2))}</div><div class="why">${d.visibility === "access" ? "sign-in required" : d.visibility === "private" ? "private link" : "no preview"}</div></div>`;
+    const snap = opts.snapshots?.[d.name];
+    const preview = snap ? `<iframe srcdoc="${esc2(snap)}" loading="lazy" tabindex="-1" sandbox="" title=""></iframe>` : d.url && d.visibility === "public" ? `<iframe src="${where}" loading="lazy" tabindex="-1" sandbox="allow-scripts" title=""></iframe>` : `<div class="fallback"><div class="mono">${esc2(d.name.slice(0, 2))}</div><div class="why">${d.visibility === "access" ? "sign-in required" : d.visibility === "private" ? "private link" : "not reachable from here"}</div></div>`;
     const badge = d.inAccount ? "" : '<span class="tag">local tunnel</span>';
     const search = [d.name, d.project ?? "", d.url ?? "", VIS_LABEL[d.visibility], KIND_LABEL[d.kind]].join(" ").toLowerCase();
     return `<a class="card" href="${where || "#"}" target="_blank" rel="noopener"
@@ -22513,26 +22530,121 @@ ${sections || '<p class="empty">Nothing published yet.</p>'}
 </body></html>`;
 }
 
+// src/services/snapshot.ts
+import fs7 from "fs";
+import path6 from "path";
+var MAX_HTML = 6e4;
+var MAX_CSS = 2e4;
+var FETCH_TIMEOUT = 4e3;
+var isRelative = (href) => !/^(https?:)?\/\//.test(href) && !href.startsWith("data:") && !href.startsWith("#");
+async function get(url, headers = {}) {
+  try {
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT), redirect: "follow" });
+    if (!res.ok) return null;
+    if (!(res.headers.get("content-type") ?? "").includes("html") && !url.endsWith(".css")) return null;
+    return (await res.text()).slice(0, MAX_HTML);
+  } catch {
+    return null;
+  }
+}
+function fromDisk(root, file) {
+  const entry = file ?? path6.join(root, "index.html");
+  try {
+    const html = fs7.readFileSync(entry, "utf8").slice(0, MAX_HTML);
+    const base = file ? path6.dirname(file) : root;
+    return {
+      html,
+      resolve: async (rel) => {
+        const target = path6.resolve(base, rel);
+        if (!target.startsWith(path6.resolve(base))) return null;
+        try {
+          return fs7.readFileSync(target, "utf8").slice(0, MAX_CSS);
+        } catch {
+          return null;
+        }
+      }
+    };
+  } catch {
+    return null;
+  }
+}
+function fromOrigin(origin, headers = {}) {
+  return {
+    fetchRoot: () => get(origin, headers),
+    resolve: (rel) => get(new URL(rel, origin + "/").toString(), headers)
+  };
+}
+async function inlineStyles(html, resolve) {
+  const links = [...html.matchAll(/<link\b[^>]*>/gi)].filter((m) => /rel\s*=\s*["']?stylesheet/i.test(m[0])).slice(0, 4);
+  let out = html;
+  for (const m of links) {
+    const href = /href\s*=\s*["']([^"']+)["']/i.exec(m[0])?.[1];
+    if (!href || !isRelative(href)) continue;
+    const css = await resolve(href);
+    if (css) out = out.replace(m[0], `<style>${css.replace(/<\/style/gi, "<\\/style")}</style>`);
+  }
+  return out;
+}
+var stripScripts = (html) => html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<script\b[^>]*\/?>/gi, "");
+async function snapshot(state, entry) {
+  let html = null;
+  let resolve = async () => null;
+  const disk = state?.root || state?.file ? fromDisk(state.root ?? path6.dirname(state.file), state.file ?? null) : null;
+  if (disk) {
+    html = disk.html;
+    resolve = disk.resolve;
+  }
+  if (!html) {
+    const port = state?.forwardPort ?? state?.targetPort ?? null;
+    if (port) {
+      const o = fromOrigin(`http://127.0.0.1:${port}`);
+      html = await o.fetchRoot();
+      resolve = o.resolve;
+    }
+  }
+  if (!html && entry.url) {
+    const headers = state?.key ? { cookie: `cloudfact_access=${state.key}` } : {};
+    if (entry.visibility !== "access") {
+      const o = fromOrigin(entry.url, headers);
+      html = await o.fetchRoot();
+      resolve = o.resolve;
+    }
+  }
+  if (!html) return null;
+  const styled = await inlineStyles(stripScripts(html), resolve);
+  return styled.length > MAX_HTML ? styled.slice(0, MAX_HTML) : styled;
+}
+async function snapshots(entries, states) {
+  const out = {};
+  await Promise.all(
+    entries.map(async (e) => {
+      const html = await snapshot(states.get(e.name), e);
+      if (html) out[e.name] = html;
+    })
+  );
+  return out;
+}
+
 // src/cloudfact.ts
 import { spawnSync as spawnSync3 } from "child_process";
 
 // src/services/auth.ts
-import path6 from "path";
+import path7 from "path";
 import readline from "readline/promises";
 import { spawn as spawn2 } from "child_process";
 
 // src/cloudfact.ts
 var hasSsh = () => spawnSync3("sh", ["-c", "command -v ssh"], { encoding: "utf8" }).status === 0;
 function resolveTarget(target) {
-  const abs = path7.resolve(target ?? ".");
+  const abs = path8.resolve(target ?? ".");
   let stat;
   try {
-    stat = fs7.statSync(abs);
+    stat = fs8.statSync(abs);
   } catch {
     throw new Error(`path does not exist: ${abs}`);
   }
-  if (stat.isDirectory()) return { mode: "dir", root: abs, file: null, defaultName: path7.basename(abs) };
-  return { mode: "file", root: null, file: abs, defaultName: path7.basename(abs, path7.extname(abs)) };
+  if (stat.isDirectory()) return { mode: "dir", root: abs, file: null, defaultName: path8.basename(abs) };
+  return { mode: "file", root: null, file: abs, defaultName: path8.basename(abs, path8.extname(abs)) };
 }
 function resolveBackend(choice) {
   const c = choice ?? "auto";
@@ -22590,14 +22702,20 @@ async function expose(opts) {
 }
 async function publishCatalog(opts = {}) {
   const c = await catalog();
-  const dir = path7.join(HOME, "catalog");
-  fs7.mkdirSync(dir, { recursive: true, mode: 448 });
-  fs7.writeFileSync(path7.join(dir, "index.html"), galleryHtml(c, { title: opts.title }));
+  const access = opts.access ?? (opts.public ? void 0 : await accountEmail() ?? void 0);
+  const states = new Map(listDeploys().map((s) => [s.name, s]));
+  const shots = await snapshots(
+    c.projects.flatMap((p) => p.deploys).map((d) => ({ name: d.name, url: d.url, visibility: d.visibility })),
+    states
+  );
+  const dir = path8.join(HOME, "catalog");
+  fs8.mkdirSync(dir, { recursive: true, mode: 448 });
+  fs8.writeFileSync(path8.join(dir, "index.html"), galleryHtml(c, { title: opts.title, snapshots: shots }));
   return deploy({
     path: dir,
     name: opts.name ?? "cloudfacts",
     project: opts.project ?? "cloudfact",
-    access: opts.access,
+    access: access ? [access].flat() : void 0,
     public: opts.public,
     backend: "workers"
   });
@@ -22771,12 +22889,12 @@ var doctorTool = defineTool({
 // src/mcp/tools/catalog.ts
 var catalogTool = defineTool({
   name: "catalog",
-  description: "Every cloudfact in the user's Cloudflare account, grouped by project, as the account itself sees them (so deploys made from another machine show up too). Each entry says whether it is public, a private key link or behind Cloudflare Access sign-in, and whether it serves static files or an app with its own server. Quick tunnels have no account-side resource and appear only when this machine still has their record (inAccount=false). publish=true turns the catalog into a browsable page and returns its URL.",
+  description: "Every cloudfact in the user's Cloudflare account, grouped by project, as the account itself sees them (so deploys made from another machine show up too). Each entry says whether it is public, a private key link or behind Cloudflare Access sign-in, and whether it serves static files or an app with its own server. Quick tunnels have no account-side resource and appear only when this machine still has their record (inAccount=false). publish=true turns the catalog into a browsable page and returns its URL; that page asks for Cloudflare Access sign-in by default, for the email that owns the account.",
   annotations: { title: "Account catalog", readOnlyHint: false },
   schema: {
     project: external_exports.string().optional().describe("Only deploys filed under this project"),
     publish: external_exports.boolean().optional().describe("Publish the catalog as a page and return its URL"),
-    access: external_exports.array(external_exports.string()).optional().describe("With publish: emails allowed to sign in to the catalog page")
+    access: external_exports.array(external_exports.string()).optional().describe("With publish: emails allowed to sign in to the catalog page (default: the account owner)")
   },
   handler: ({ project, publish, access }) => publish ? publishCatalog({ project, access }) : catalog({ project })
 });
@@ -22829,13 +22947,13 @@ function createServer() {
       description: "Publish a path from this machine and return the URL",
       argsSchema: { path: external_exports.string().describe("folder or .html file") }
     },
-    ({ path: path8 }) => ({
+    ({ path: path9 }) => ({
       messages: [
         {
           role: "user",
           content: {
             type: "text",
-            text: `Publish ${path8} with the cloudfact deploy tool and give me the public URL. If it fails, run doctor and logs and explain.`
+            text: `Publish ${path9} with the cloudfact deploy tool and give me the public URL. If it fails, run doctor and logs and explain.`
           }
         }
       ]
