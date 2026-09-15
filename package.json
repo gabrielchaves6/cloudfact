@@ -1,6 +1,6 @@
 {
   "name": "cloudfact",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "Publish a folder or HTML file from your machine to a public Cloudflare URL with one command. CLI + MCP server + /cloudfact skill.",
   "type": "module",
   "bin": {
