@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [0.3.0] - 2026-09-15
 
+First public release.
+
 ### Changed
 
 - Rewritten in TypeScript following the structure of the reference MCP servers: `src/mcp/tools`, `backends/`, `services/`, typed `defineTool()` with annotations, tsup bundle, vitest, eslint + prettier, GitHub Actions CI, `server.json` for the MCP registry.

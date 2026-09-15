@@ -6,21 +6,25 @@ permissions:
   contents: write
   id-token: write
 jobs:
-  npm:
+  release:
     runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           registry-url: https://registry.npmjs.org
       - run: npm ci
       - run: npm run check
-      - name: publish to npm (requires NPM_TOKEN or trusted publishing)
+      - name: publish to npm (skipped until the NPM_TOKEN secret exists)
+        if: env.NPM_TOKEN != ''
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - uses: softprops/action-gh-release@v2
+      - name: GitHub release with generated notes
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
