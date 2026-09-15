@@ -106,7 +106,7 @@ npm run docs       # regenerate docs/tools.md
 npm run inspect    # MCP Inspector against dist/server.js
 ```
 
-CI fails if `dist/` or `docs/tools.md` are stale, or if the version differs across `package.json`, `server.json` and the plugin manifests. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
+CI fails if `dist/` or `docs/tools.md` are stale, or if the version differs across `package.json`, `server.json` and the plugin manifests. Every push to `main` is released automatically (patch bump by the workflow; `npm run bump` for minor/major). See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
 ## Roadmap
 

@@ -23,8 +23,8 @@ Node 20.19+ (see `.nvmrc`). `npm run inspect` opens the MCP Inspector against `d
 
 ## Releasing
 
-Releases are continuous from `main`: bump the version and push.
+Every push to `main` is a release (continuous deployment):
 
-1. `npm run bump x.y.z` (updates `package.json`, `server.json` and the plugin manifests) and add a `CHANGELOG.md` entry.
-2. `npm run check`, commit, push to `main`.
-3. The `release` workflow sees the new version, runs the full check, publishes to npm (when the `NPM_TOKEN` secret exists), creates the `vx.y.z` tag and the GitHub release with generated notes. Pushes that do not change the version only run CI.
+- Push without touching the version → the `release` workflow bumps the **patch** version itself (bot commit `chore(release): vx.y.z`), runs the full check, creates the tag and the GitHub release with generated notes, and publishes to npm when the `NPM_TOKEN` secret exists.
+- For a **minor or major** release, run `npm run bump x.y.z` (updates `package.json`, `server.json` and the plugin manifests), add a `CHANGELOG.md` entry, and push; that exact version is released.
+- Add `[skip release]` to the commit message to only run CI (docs-only changes, for example).
