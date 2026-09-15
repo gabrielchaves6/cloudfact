@@ -25,7 +25,9 @@ h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;
 .card:hover{border-color:#3d3d3d;transform:translateY(-2px)}
 .shot{height:172px;background:#0a0a0a;border-bottom:1px solid #1f1f1f;position:relative;overflow:hidden}
 .shot iframe{width:1280px;height:820px;border:0;transform:scale(.216);transform-origin:top left;pointer-events:none;background:#fff}
-.shot .fallback{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#5a5a5a;font-size:13px;padding:16px;text-align:center}
+.shot .fallback{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:radial-gradient(120% 100% at 50% 0%,#1d1d1d 0%,#121212 70%);color:#6d6d6d}
+.shot .mono{width:52px;height:52px;border-radius:13px;background:#232323;border:1px solid #303030;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:600;color:#c9c9c9;text-transform:uppercase}
+.shot .why{font-size:12px;letter-spacing:.02em}
 .meta{padding:13px 15px 15px}
 .title{font-weight:600;font-size:15px;margin:0 0 5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sub{display:flex;align-items:center;gap:7px;color:#8a8a8a;font-size:12.5px;flex-wrap:wrap}
@@ -35,7 +37,7 @@ h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;
 .pill.vis-private{color:#9fc0e8;border-color:#243243}
 .pill.vis-public{color:#93cba4;border-color:#23392b}
 .sub svg{flex:none}
-.tag{margin-left:auto;background:#1f1f1f;border-radius:5px;padding:2px 7px;font-size:11px;color:#a8a8a8}
+.tag{background:#1f1f1f;border:1px solid #2a2a2a;border-radius:6px;padding:2px 8px;font-size:11.5px;color:#9a9a9a}
 .empty{color:#7a7a7a;padding:40px 0}
 body.list .grid{display:flex;flex-direction:column;gap:9px}
 body.list .shot{display:none}
@@ -116,7 +118,9 @@ export function galleryHtml(c: CatalogResult, opts: { title?: string } = {}): st
     const preview =
       d.url && d.visibility === 'public' && d.kind === 'static'
         ? `<iframe src="${where}" loading="lazy" tabindex="-1" sandbox="allow-scripts" title=""></iframe>`
-        : `<div class="fallback">${d.visibility === 'access' ? 'sign-in required' : d.visibility === 'private' ? 'private link' : 'no preview'}</div>`;
+        : `<div class="fallback"><div class="mono">${esc(d.name.slice(0, 2))}</div><div class="why">${
+            d.visibility === 'access' ? 'sign-in required' : d.visibility === 'private' ? 'private link' : 'no preview'
+          }</div></div>`;
     const badge = d.inAccount ? '' : '<span class="tag">local tunnel</span>';
     const search = [d.name, d.project ?? '', d.url ?? '', VIS_LABEL[d.visibility], KIND_LABEL[d.kind]].join(' ').toLowerCase();
     return `<a class="card" href="${where || '#'}" target="_blank" rel="noopener"
