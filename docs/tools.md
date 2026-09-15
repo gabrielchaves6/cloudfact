@@ -8,13 +8,13 @@ Publica uma pasta (ou um único .html) da máquina em uma URL pública na Cloudf
 
 _mutating, idempotent_
 
-| parameter | type                            | required | description                                                                                    |
-| --------- | ------------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
-| `path`    | string                          | yes      | Caminho absoluto da pasta ou do arquivo .html a publicar                                       |
-| `name`    | string                          | no       | Nome do deploy (slug). Padrão: nome da pasta/arquivo                                           |
-| `private` | boolean                         | no       | Protege com chave: só quem abrir o privateUrl (#key=...) vê o conteúdo. Força o backend tunnel |
-| `backend` | `auto` \| `tunnel` \| `workers` | no       | auto = workers se logado na Cloudflare, senão tunnel                                           |
-| `restart` | boolean                         | no       | Força reiniciar mesmo se já estiver no ar (gera URL nova no tunnel)                            |
+| parameter | type | required | description |
+| --- | --- | --- | --- |
+| `path` | string | yes | Caminho absoluto da pasta ou do arquivo .html a publicar |
+| `name` | string | no | Nome do deploy (slug). Padrão: nome da pasta/arquivo |
+| `private` | boolean | no | Protege com chave: só quem abrir o privateUrl (#key=...) vê o conteúdo. Força o backend tunnel |
+| `backend` | `auto` \| `tunnel` \| `workers` | no | auto = workers se logado na Cloudflare, senão tunnel |
+| `restart` | boolean | no | Força reiniciar mesmo se já estiver no ar (gera URL nova no tunnel) |
 
 ## `list` — Listar deploys
 
@@ -30,9 +30,9 @@ Estado de um deploy, incluindo checagem HTTP da URL pública (reachable/httpStat
 
 _read-only_
 
-| parameter | type   | required | description    |
-| --------- | ------ | -------- | -------------- |
-| `name`    | string | yes      | Nome do deploy |
+| parameter | type | required | description |
+| --- | --- | --- | --- |
+| `name` | string | yes | Nome do deploy |
 
 ## `stop` — Parar deploy
 
@@ -40,10 +40,10 @@ Encerra o servidor local e o túnel de um deploy (ou de todos com all=true). O r
 
 _mutating_
 
-| parameter | type    | required | description           |
-| --------- | ------- | -------- | --------------------- |
-| `name`    | string  | no       | Nome do deploy        |
-| `all`     | boolean | no       | Parar todos os túneis |
+| parameter | type | required | description |
+| --- | --- | --- | --- |
+| `name` | string | no | Nome do deploy |
+| `all` | boolean | no | Parar todos os túneis |
 
 ## `remove` — Remover deploy
 
@@ -51,9 +51,9 @@ Para (se estiver rodando) e apaga o registro e logs do deploy. No backend worker
 
 _mutating, destructive_
 
-| parameter | type   | required | description    |
-| --------- | ------ | -------- | -------------- |
-| `name`    | string | yes      | Nome do deploy |
+| parameter | type | required | description |
+| --- | --- | --- | --- |
+| `name` | string | yes | Nome do deploy |
 
 ## `logs` — Logs de um deploy
 
@@ -61,10 +61,10 @@ _mutating, destructive_
 
 _read-only_
 
-| parameter | type   | required | description                      |
-| --------- | ------ | -------- | -------------------------------- |
-| `name`    | string | yes      | Nome do deploy                   |
-| `lines`   | number | no       | Quantidade de linhas (padrão 40) |
+| parameter | type | required | description |
+| --- | --- | --- | --- |
+| `name` | string | yes | Nome do deploy |
+| `lines` | number | no | Quantidade de linhas (padrão 40) |
 
 ## `doctor` — Diagnóstico
 
@@ -73,3 +73,4 @@ Diagnóstico: cloudflared, login na Cloudflare, backend padrão e deploys ativos
 _read-only_
 
 No parameters.
+
