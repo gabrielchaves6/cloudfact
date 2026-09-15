@@ -3258,8 +3258,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path9) {
-      let input = path9;
+    function removeDotSegments(path10) {
+      let input = path10;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3668,8 +3668,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path9 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path9 && path9 !== "/" ? path9 : void 0;
+        const path10 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path10 && path10 !== "/" ? path10 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -7181,12 +7181,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs9, exportName) {
+    function addFormats(ajv, list, fs10, exportName) {
       var _a;
       var _b;
       (_a = (_b = ajv.opts.code).formats) !== null && _a !== void 0 ? _a : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs9[f]);
+        ajv.addFormat(f, fs10[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -7195,8 +7195,8 @@ var require_dist = __commonJS({
 });
 
 // src/cloudfact.ts
-import fs8 from "fs";
-import path8 from "path";
+import fs9 from "fs";
+import path9 from "path";
 
 // src/config.ts
 import fs from "fs";
@@ -7216,6 +7216,8 @@ var WRANGLER_CONFIG = path.join(
 );
 var HOST_SCRIPT = process.env.CLOUDFACT_HOST_SCRIPT ?? path.join(here, "host.js");
 var BRAND_DIR = process.env.CLOUDFACT_BRAND_DIR ?? path.join(here, "brand");
+var SERVER_SCRIPT = process.env.CLOUDFACT_SERVER_SCRIPT ?? path.join(here, "server.js");
+var SKILL_DIR = process.env.CLOUDFACT_SKILL_DIR ?? [path.join(here, "..", "skills", "cloudfact"), path.join(here, "skills", "cloudfact")].find((p) => fs.existsSync(p)) ?? path.join(here, "..", "skills", "cloudfact");
 var BIN_SCRIPT = process.env.CLOUDFACT_BIN_SCRIPT ?? path.join(here, "bin.js");
 var TOKEN_URL = "https://dash.cloudflare.com/profile/api-tokens";
 function readVersion() {
@@ -7703,8 +7705,8 @@ var API = "https://api.cloudflare.com/client/v4";
 var ACCESS_TOKEN_HELP = 'Cloudflare Access needs an API token (the browser login has no Access scopes). Create one at https://dash.cloudflare.com/profile/api-tokens \u2192 Create Token \u2192 template "Edit Cloudflare Workers" \u2192 add permissions "Access: Apps and Policies \u2014 Edit" and "Access: Organizations, Identity Providers, and Groups \u2014 Edit" \u2192 then run: cloudfact login --token <token>';
 function apiClient(token, fetchImpl = fetch) {
   return {
-    async request(method, path9, body) {
-      const res = await fetchImpl(API + path9, {
+    async request(method, path10, body) {
+      const res = await fetchImpl(API + path10, {
         method,
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: body === void 0 ? void 0 : JSON.stringify(body)
@@ -7716,7 +7718,7 @@ function apiClient(token, fetchImpl = fetch) {
       }
       if (!res.ok || env?.success === false) {
         const msg = env?.errors?.map((e) => `${e.code}: ${e.message}`).join("; ") || `HTTP ${res.status}`;
-        throw new Error(`Cloudflare API ${method} ${path9} failed \u2014 ${msg}`);
+        throw new Error(`Cloudflare API ${method} ${path10} failed \u2014 ${msg}`);
       }
       return env.result;
     }
@@ -7867,8 +7869,8 @@ function bearer(cfg = readConfig()) {
   if (oauth) return { token: oauth, accountId: creds?.accountId ?? cfg.cloudflareAccountId ?? null };
   return null;
 }
-async function api(token, method, path9, body, fetchImpl = fetch) {
-  const res = await fetchImpl(API2 + path9, {
+async function api(token, method, path10, body, fetchImpl = fetch) {
+  const res = await fetchImpl(API2 + path10, {
     method,
     headers: { Authorization: `Bearer ${token}`, ...body === void 0 ? {} : { "Content-Type": "application/json" } },
     body: body === void 0 ? void 0 : JSON.stringify(body)
@@ -7880,7 +7882,7 @@ async function api(token, method, path9, body, fetchImpl = fetch) {
   }
   if (!res.ok || env?.success === false) {
     const msg = env?.errors?.map((e) => `${e.code}: ${e.message}`).join("; ") || `HTTP ${res.status}`;
-    throw new Error(`Cloudflare API ${method} ${path9} failed \u2014 ${msg}`);
+    throw new Error(`Cloudflare API ${method} ${path10} failed \u2014 ${msg}`);
   }
   return env.result;
 }
@@ -8537,10 +8539,76 @@ async function snapshots(entries, states) {
 }
 
 // src/cloudfact.ts
-import { spawn as spawn3, spawnSync as spawnSync3 } from "child_process";
+import { spawn as spawn3, spawnSync as spawnSync4 } from "child_process";
+
+// src/services/codex.ts
+import fs8 from "fs";
+import os3 from "os";
+import path7 from "path";
+import { spawnSync as spawnSync3 } from "child_process";
+var codexHome = () => process.env.CODEX_HOME ?? path7.join(os3.homedir(), ".codex");
+var ALLOWED_FRONTMATTER = /* @__PURE__ */ new Set(["name", "description", "license", "allowed-tools", "metadata"]);
+function skillForCodex(markdown) {
+  const m = /^---\n([\s\S]*?)\n---\n/.exec(markdown);
+  if (!m) return markdown;
+  const kept = m[1].split("\n").filter((line) => {
+    const key = /^([A-Za-z0-9_-]+):/.exec(line)?.[1];
+    return key === void 0 ? true : ALLOWED_FRONTMATTER.has(key);
+  }).join("\n");
+  return `---
+${kept}
+---
+` + markdown.slice(m[0].length);
+}
+function copySkill(target) {
+  fs8.rmSync(target, { recursive: true, force: true });
+  fs8.mkdirSync(target, { recursive: true });
+  let n = 0;
+  for (const entry of fs8.readdirSync(SKILL_DIR, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const from = path7.join(SKILL_DIR, entry.name);
+    const body = fs8.readFileSync(from, "utf8");
+    fs8.writeFileSync(path7.join(target, entry.name), entry.name === "SKILL.md" ? skillForCodex(body) : body);
+    n += 1;
+  }
+  return n;
+}
+function mergeMcpToml(toml, command, args) {
+  const block = `[mcp_servers.cloudfact]
+command = ${JSON.stringify(command)}
+args = [${args.map((a) => JSON.stringify(a)).join(", ")}]
+`;
+  const header = /^\[mcp_servers\.cloudfact\]\s*$/m;
+  const start = header.exec(toml);
+  if (!start) return toml.trimEnd() + (toml.trim() ? "\n\n" : "") + block;
+  const after = toml.slice(start.index + start[0].length);
+  const next = /^\[/m.exec(after);
+  const rest = next ? after.slice(next.index) : "";
+  return toml.slice(0, start.index) + block + (rest ? "\n" + rest : "");
+}
+function setupCodex() {
+  const home = codexHome();
+  fs8.mkdirSync(home, { recursive: true });
+  const skillPath = path7.join(home, "skills", "cloudfact");
+  fs8.mkdirSync(path7.dirname(skillPath), { recursive: true });
+  const files = copySkill(skillPath);
+  const win = process.platform === "win32";
+  const run = (args) => spawnSync3("codex", args, { encoding: "utf8", shell: win, stdio: "ignore" });
+  let registeredWith = "config.toml";
+  if (run(["--version"]).status === 0) {
+    run(["mcp", "remove", "cloudfact"]);
+    if (run(["mcp", "add", "cloudfact", "--", process.execPath, SERVER_SCRIPT]).status === 0) registeredWith = "codex-cli";
+  }
+  const configPath = path7.join(home, "config.toml");
+  if (registeredWith === "config.toml") {
+    const current = fs8.existsSync(configPath) ? fs8.readFileSync(configPath, "utf8") : "";
+    fs8.writeFileSync(configPath, mergeMcpToml(current, process.execPath, [SERVER_SCRIPT]));
+  }
+  return { codexHome: home, configPath, skillPath, files, registeredWith };
+}
 
 // src/services/auth.ts
-import path7 from "path";
+import path8 from "path";
 import readline from "readline/promises";
 import { spawn as spawn2 } from "child_process";
 var API3 = "https://api.cloudflare.com/client/v4";
@@ -8610,7 +8678,7 @@ ${menu}`);
     cloudflareAccountName: account?.name ?? null,
     loggedInAt: (/* @__PURE__ */ new Date()).toISOString()
   });
-  return { ok: true, source: "token", accountId, accountName: account?.name ?? null, config: path7.join(HOME, "config.json") };
+  return { ok: true, source: "token", accountId, accountName: account?.name ?? null, config: path8.join(HOME, "config.json") };
 }
 async function loginWithDevice(opts = {}) {
   const onPrompt = opts.onPrompt ?? ((t) => process.stderr.write(t));
@@ -8648,7 +8716,7 @@ async function loginWithDevice(opts = {}) {
 ${out.trim().split("\n").slice(-6).join("\n")}`);
   }
   writeConfig({ ...readConfig(), cloudflareAuth: "wrangler", loggedInAt: (/* @__PURE__ */ new Date()).toISOString() });
-  return { ok: true, source: "wrangler", config: path7.join(HOME, "config.json") };
+  return { ok: true, source: "wrangler", config: path8.join(HOME, "config.json") };
 }
 function logout() {
   const { cloudflareApiToken, cloudflareAccountId: _a, cloudflareAccountName: _n, cloudflareAuth, loggedInAt: _l, ...rest } = readConfig();
@@ -8661,17 +8729,17 @@ function logout() {
 }
 
 // src/cloudfact.ts
-var hasSsh = () => spawnSync3("sh", ["-c", "command -v ssh"], { encoding: "utf8" }).status === 0;
+var hasSsh = () => spawnSync4("sh", ["-c", "command -v ssh"], { encoding: "utf8" }).status === 0;
 function resolveTarget(target) {
-  const abs = path8.resolve(target ?? ".");
+  const abs = path9.resolve(target ?? ".");
   let stat;
   try {
-    stat = fs8.statSync(abs);
+    stat = fs9.statSync(abs);
   } catch {
     throw new Error(`path does not exist: ${abs}`);
   }
-  if (stat.isDirectory()) return { mode: "dir", root: abs, file: null, defaultName: path8.basename(abs) };
-  return { mode: "file", root: null, file: abs, defaultName: path8.basename(abs, path8.extname(abs)) };
+  if (stat.isDirectory()) return { mode: "dir", root: abs, file: null, defaultName: path9.basename(abs) };
+  return { mode: "file", root: null, file: abs, defaultName: path9.basename(abs, path9.extname(abs)) };
 }
 function resolveBackend(choice) {
   const c = choice ?? "auto";
@@ -8781,11 +8849,11 @@ async function publishCatalog(opts = {}) {
     c.projects.flatMap((p) => p.deploys).map((d) => ({ name: d.name, url: d.url, visibility: d.visibility })),
     states
   );
-  const dir = path8.join(HOME, "catalog");
-  fs8.mkdirSync(dir, { recursive: true, mode: 448 });
-  for (const file of fs8.existsSync(BRAND_DIR) ? fs8.readdirSync(BRAND_DIR) : [])
-    fs8.copyFileSync(path8.join(BRAND_DIR, file), path8.join(dir, file));
-  fs8.writeFileSync(path8.join(dir, "index.html"), galleryHtml(c, { title: opts.title, snapshots: shots }));
+  const dir = path9.join(HOME, "catalog");
+  fs9.mkdirSync(dir, { recursive: true, mode: 448 });
+  for (const file of fs9.existsSync(BRAND_DIR) ? fs9.readdirSync(BRAND_DIR) : [])
+    fs9.copyFileSync(path9.join(BRAND_DIR, file), path9.join(dir, file));
+  fs9.writeFileSync(path9.join(dir, "index.html"), galleryHtml(c, { title: opts.title, snapshots: shots }));
   const name = opts.name ?? readConfig().catalogDeploy ?? "cloudfacts";
   const result = await deploy({
     path: dir,
@@ -9354,8 +9422,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path9, errorMaps, issueData } = params;
-  const fullPath = [...path9, ...issueData.path || []];
+  const { data, path: path10, errorMaps, issueData } = params;
+  const fullPath = [...path10, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -9471,11 +9539,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path9, key) {
+  constructor(parent, value, path10, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path9;
+    this._path = path10;
     this._key = key;
   }
   get path() {
@@ -13112,10 +13180,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path9) {
-  if (!path9)
+function getElementAtPath(obj, path10) {
+  if (!path10)
     return obj;
-  return path9.reduce((acc, key) => acc?.[key], obj);
+  return path10.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -13435,11 +13503,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path9, issues) {
+function prefixIssues(path10, issues) {
   return issues.map((iss) => {
     var _a;
     (_a = iss).path ?? (_a.path = []);
-    iss.path.unshift(path9);
+    iss.path.unshift(path10);
     return iss;
   });
 }
@@ -16850,11 +16918,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path9) {
-  if (path9.length === 0) {
+function getDotPath(path10) {
+  if (path10.length === 0) {
     return "object root";
   }
-  return path9.reduce((acc, seg, index) => {
+  return path10.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -23186,13 +23254,13 @@ function createServer() {
       description: "Publish a path from this machine and return the URL",
       argsSchema: { path: external_exports.string().describe("folder or .html file") }
     },
-    ({ path: path9 }) => ({
+    ({ path: path10 }) => ({
       messages: [
         {
           role: "user",
           content: {
             type: "text",
-            text: `Publish ${path9} with the cloudfact deploy tool and give me the public URL. If it fails, run doctor and logs and explain.`
+            text: `Publish ${path10} with the cloudfact deploy tool and give me the public URL. If it fails, run doctor and logs and explain.`
           }
         }
       ]
@@ -23221,6 +23289,7 @@ export {
   rotate,
   setCredentials,
   setProject,
+  setupCodex,
   status,
   stop,
   stopAll,

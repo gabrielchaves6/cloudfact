@@ -21,6 +21,15 @@ export const HOST_SCRIPT = process.env.CLOUDFACT_HOST_SCRIPT ?? path.join(here, 
 /** Brand assets (font, mark) copied next to the bundle at build time; see brand/README.md. */
 export const BRAND_DIR = process.env.CLOUDFACT_BRAND_DIR ?? path.join(here, 'brand');
 
+/** The MCP server bundle, registered with other agents (Codex and friends). */
+export const SERVER_SCRIPT = process.env.CLOUDFACT_SERVER_SCRIPT ?? path.join(here, 'server.js');
+
+/** The `/cloudfact` skill, shipped next to the bundle in the package and the plugin. */
+export const SKILL_DIR =
+  process.env.CLOUDFACT_SKILL_DIR ??
+  [path.join(here, '..', 'skills', 'cloudfact'), path.join(here, 'skills', 'cloudfact')].find((p) => fs.existsSync(p)) ??
+  path.join(here, '..', 'skills', 'cloudfact');
+
 /** The CLI bundle, spawned detached to refresh the catalog page after a deploy. */
 export const BIN_SCRIPT = process.env.CLOUDFACT_BIN_SCRIPT ?? path.join(here, 'bin.js');
 export const TOKEN_URL = 'https://dash.cloudflare.com/profile/api-tokens';

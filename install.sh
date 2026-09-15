@@ -25,9 +25,8 @@ if command -v claude >/dev/null; then
   claude plugin install cloudfact@cloudfact -s user >/dev/null 2>&1 && echo "claude code: cloudfact plugin (/cloudfact skill + MCP)" || echo "claude code: plugin install failed; try: claude plugin marketplace add $ROOT && claude plugin install cloudfact@cloudfact"
 fi
 if command -v codex >/dev/null; then
-  mkdir -p ~/.codex/skills && ln -sfn "$ROOT/skills/cloudfact" ~/.codex/skills/cloudfact
-  codex mcp remove cloudfact >/dev/null 2>&1 || true
-  codex mcp add cloudfact -- "$NODE" "$ROOT/dist/server.js" >/dev/null && echo "codex: skill + MCP"
+  # one code path with `cloudfact setup --codex`, which also works where this script cannot run
+  "$NODE" "$ROOT/dist/bin.js" setup --codex >/dev/null && echo "codex: skill + MCP"
 fi
 echo "other MCP clients: node $ROOT/dist/server.js"
 echo "done. optional next step: cloudfact login --device   (fixed URL on your Cloudflare account)"

@@ -24,6 +24,18 @@ claude plugin install cloudfact@cloudfact
 curl -fsSL https://raw.githubusercontent.com/gabrielchaves6/cloudfact/main/install.sh | bash
 ```
 
+**Codex** — register the server and the skill from cloudfact itself (works on Windows too, unlike the
+shell installer):
+
+```
+cloudfact setup --codex     # or: npx/node <path>/dist/bin.js setup --codex
+```
+
+It writes `[mcp_servers.cloudfact]` into Codex's config (through `codex mcp add` when the CLI is
+around, by editing `config.toml` otherwise, leaving your other servers alone) and copies the skill into
+`$CODEX_HOME/skills/cloudfact`, minus the frontmatter keys Codex refuses. Restart Codex afterwards. Run
+it again after an update: it replaces its own entry instead of piling up copies.
+
 **Any other MCP client** (Cursor, Windsurf, Claude Desktop…): clone and point at the bundled, dependency-free server:
 
 ```json

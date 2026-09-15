@@ -21,6 +21,7 @@ usage:
   cloudfact logs <name> [-n 40]
   cloudfact doctor
   cloudfact setup                                (download cloudflared into ~/.cloudfact/bin if missing)
+  cloudfact setup --codex                        (register the MCP server and the /cloudfact skill in Codex)
   cloudfact login --device                       (approve in a browser on any device; no token pasting)
   cloudfact login [--token T] [--account-id ID]  (Cloudflare API token)
   cloudfact logout
@@ -60,6 +61,7 @@ export async function main(argv: string[]): Promise<number> {
       password: { type: 'string' },
       note: { type: 'string' },
       clear: { type: 'boolean' },
+      codex: { type: 'boolean' },
     },
   });
   const [cmd, ...rest] = positionals;
@@ -205,9 +207,20 @@ export async function main(argv: string[]): Promise<number> {
     case 'doctor':
       print(await cf.doctor());
       return 0;
-    case 'setup':
+    case 'setup': {
+      if (values.codex) {
+        const r = cf.setupCodex();
+        if (values.json) print(r);
+        else {
+          console.log(`codex: MCP server registered (${r.registeredWith === 'codex-cli' ? 'codex mcp add' : r.configPath})`);
+          console.log(`codex: skill installed at ${r.skillPath} (${r.files} files)`);
+          console.log('restart Codex to pick both up.');
+        }
+        return 0;
+      }
       print({ cloudflared: await cf.installCloudflared(console.error) });
       return 0;
+    }
     case 'login': {
       if (values.device) {
         const r = await cf.loginWithDevice();

@@ -28,6 +28,7 @@ import type {
 
 export { listDeploys, readLogs, summarize } from './services/state.js';
 export { catalog, setProject } from './services/catalog.js';
+export { setupCodex } from './services/codex.js';
 export { loginWithDevice, loginWithToken, logout } from './services/auth.js';
 export { installCloudflared } from './services/cloudflared.js';
 export { VERSION } from './config.js';

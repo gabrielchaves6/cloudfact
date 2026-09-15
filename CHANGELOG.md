@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- `cloudfact setup --codex`: registers the MCP server and installs the `/cloudfact` skill in Codex from Node, so it also works on Windows, where the shell installer cannot run. The skill is copied rather than symlinked, and the frontmatter keys Codex refuses are stripped — the old symlink pointed at a path that does not exist, so the skill never loaded there.
+
 ### Fixed
 
 - A page discovered on this machine that answers 401 or 403 is no longer listed as public: it is shown as `App login`, because the app behind it wants its own credentials, which cloudfact cannot supply. Its stored login, if any, is one click away on the card, and each value copies on click.

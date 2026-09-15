@@ -183,6 +183,16 @@ declare function catalog(opts?: {
 /** Files an existing deploy under a project (or clears it with null), without redeploying. */
 declare function setProject(name: string, project: string | null, fetchImpl?: typeof fetch): Promise<CatalogEntry>;
 
+interface CodexSetup {
+    codexHome: string;
+    configPath: string;
+    skillPath: string;
+    files: number;
+    registeredWith: 'codex-cli' | 'config.toml';
+}
+/** Registers the MCP server and installs the skill. Idempotent: run it again after an update. */
+declare function setupCodex(): CodexSetup;
+
 interface LoginResult {
     ok: true;
     source: 'token' | 'wrangler';
@@ -339,4 +349,4 @@ interface ToolDefinition<Schema extends ZodRawShape = ZodRawShape> {
 
 declare const tools: ToolDefinition<any>[];
 
-export { type Backend, type BackendChoice, type CatalogEntry, type CatalogResult, type Credentials, type DeployKind, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type ExposeOptions, type SshTarget, type StatusResult, type ToolDefinition, VERSION, type Visibility, catalog, catalogHint, createServer, deploy, doctor, expose, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, publishCatalog, readLogs, refreshCatalogPage, remove, resolveBackend, rotate, setCredentials, setProject, status, stop, stopAll, summarize, tools, withLocalSecrets };
+export { type Backend, type BackendChoice, type CatalogEntry, type CatalogResult, type Credentials, type DeployKind, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type ExposeOptions, type SshTarget, type StatusResult, type ToolDefinition, VERSION, type Visibility, catalog, catalogHint, createServer, deploy, doctor, expose, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, publishCatalog, readLogs, refreshCatalogPage, remove, resolveBackend, rotate, setCredentials, setProject, setupCodex, status, stop, stopAll, summarize, tools, withLocalSecrets };

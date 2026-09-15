@@ -24,6 +24,8 @@ var WRANGLER_CONFIG = path.join(
 );
 var HOST_SCRIPT = process.env.CLOUDFACT_HOST_SCRIPT ?? path.join(here, "host.js");
 var BRAND_DIR = process.env.CLOUDFACT_BRAND_DIR ?? path.join(here, "brand");
+var SERVER_SCRIPT = process.env.CLOUDFACT_SERVER_SCRIPT ?? path.join(here, "server.js");
+var SKILL_DIR = process.env.CLOUDFACT_SKILL_DIR ?? [path.join(here, "..", "skills", "cloudfact"), path.join(here, "skills", "cloudfact")].find((p) => fs.existsSync(p)) ?? path.join(here, "..", "skills", "cloudfact");
 var BIN_SCRIPT = process.env.CLOUDFACT_BIN_SCRIPT ?? path.join(here, "bin.js");
 function readVersion() {
   for (const candidate of [path.join(here, "..", "package.json"), path.join(here, "..", "..", "package.json")]) {
