@@ -1,6 +1,7 @@
 /**
- * Detached process that keeps a tunnel deploy alive: static server on 127.0.0.1:<free port>
- * + `cloudflared tunnel` pointing at it. Restarts cloudflared if it drops. Internal use: node host.js <name>.
+ * Detached process that keeps a tunnel deploy alive: a local server on 127.0.0.1:<free port>
+ * (static files, or a reverse proxy to an app for `expose`) + `cloudflared tunnel` pointing at it.
+ * Restarts cloudflared (and the SSH forward, when used) if they drop. Internal use: node host.js <name>.
  */
 import fs from 'node:fs';
 import http from 'node:http';
@@ -10,6 +11,7 @@ import { readConfig } from '../../config.js';
 import { log } from '../../logger.js';
 import { findCloudflared } from '../../services/cloudflared.js';
 import { deployDir, patchState, readState } from '../../services/state.js';
+import { createProxy } from './proxy.js';
 import { createStaticHandler } from './static-server.js';
 
 const TUNNEL_URL = /https:\/\/(?!api\.)[a-z0-9-]+\.trycloudflare\.com/;
@@ -19,25 +21,95 @@ if (!name) {
   log.ts('usage: host.js <name>');
   process.exit(2);
 }
-const initial = readState(name);
-if (!initial) {
+const loaded = readState(name);
+if (!loaded) {
   log.ts('no state.json for', name);
   process.exit(2);
 }
+const initial = loaded;
 const dir = deployDir(name);
 let stopping = false;
 let tunnel: ChildProcess | null = null;
+let ssh: ChildProcess | null = null;
 let restarts = 0;
+let sshRestarts = 0;
 
-const server = http.createServer(createStaticHandler({ mode: initial.mode, root: initial.root, file: initial.file, key: initial.key }));
-server.keepAliveTimeout = 65_000;
-server.listen(0, '127.0.0.1', () => {
-  const address = server.address();
-  const port = typeof address === 'object' && address ? address.port : 0;
-  patchState(name, { hostPid: process.pid, port, status: 'starting', local: `http://127.0.0.1:${port}` });
-  log.ts('local server on port', port);
-  startTunnel(port);
-});
+async function main(): Promise<void> {
+  let server: http.Server;
+  if (initial.mode === 'proxy') {
+    let targetPort = initial.targetPort!;
+    if (initial.ssh) {
+      targetPort = await freePort();
+      patchState(name, { forwardPort: targetPort });
+      startSshForward(targetPort);
+    }
+    const proxy = createProxy({ targetPort, key: initial.key });
+    server = http.createServer(proxy.handler);
+    server.on('upgrade', proxy.upgrade);
+  } else {
+    server = http.createServer(createStaticHandler({ mode: initial.mode, root: initial.root, file: initial.file, key: initial.key }));
+  }
+  server.keepAliveTimeout = 65_000;
+  server.listen(0, '127.0.0.1', () => {
+    const address = server.address();
+    const port = typeof address === 'object' && address ? address.port : 0;
+    patchState(name, { hostPid: process.pid, port, status: 'starting', local: `http://127.0.0.1:${port}` });
+    log.ts('local server on port', port);
+    startTunnel(port);
+  });
+  process.on('SIGTERM', () => shutdown(server));
+  process.on('SIGINT', () => shutdown(server));
+}
+
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = http.createServer();
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      probe.close(() => resolve(port));
+    });
+    probe.on('error', reject);
+  });
+}
+
+/** `ssh -N -L` to the remote app; restarted with backoff if the connection drops. */
+function startSshForward(localPort: number): void {
+  if (stopping || !initial.ssh) return;
+  const { destination, port, identity } = initial.ssh;
+  const args = [
+    '-N',
+    '-o',
+    'ExitOnForwardFailure=yes',
+    '-o',
+    'ServerAliveInterval=30',
+    '-o',
+    'ServerAliveCountMax=3',
+    '-o',
+    'BatchMode=yes',
+    '-o',
+    'StrictHostKeyChecking=accept-new',
+    '-L',
+    `127.0.0.1:${localPort}:127.0.0.1:${initial.targetPort}`,
+  ];
+  if (port) args.push('-p', String(port));
+  if (identity) args.push('-i', identity);
+  args.push(destination);
+  const logFd = fs.openSync(path.join(dir, 'ssh.log'), 'a');
+  ssh = spawn('ssh', args, { stdio: ['ignore', logFd, logFd] });
+  fs.closeSync(logFd);
+  patchState(name, { sshPid: ssh.pid ?? null });
+  log.ts(`ssh forward 127.0.0.1:${localPort} → ${destination}:${initial.targetPort}`);
+  ssh.on('exit', (code, signal) => {
+    ssh = null;
+    if (stopping) return;
+    sshRestarts += 1;
+    const delay = Math.min(30_000, 2_000 * sshRestarts);
+    log.ts(`ssh exited (code=${code} sig=${signal}); reconnecting in ${delay / 1000}s`);
+    patchState(name, { sshPid: null, error: `ssh forward down (exit ${code}); reconnecting` });
+    setTimeout(() => startSshForward(localPort), delay);
+  });
+}
 
 function startTunnel(port: number): void {
   if (stopping) return;
@@ -83,18 +155,27 @@ function startTunnel(port: number): void {
   });
 }
 
-function shutdown(): void {
+function shutdown(server: http.Server): void {
   if (stopping) return;
   stopping = true;
   log.ts('shutting down');
-  patchState(name, { status: 'stopped', url: null, privateUrl: null, hostPid: null, tunnelPid: null, stoppedAt: new Date().toISOString() });
+  patchState(name, {
+    status: 'stopped',
+    url: null,
+    privateUrl: null,
+    hostPid: null,
+    tunnelPid: null,
+    sshPid: null,
+    stoppedAt: new Date().toISOString(),
+  });
   tunnel?.kill('SIGTERM');
+  ssh?.kill('SIGTERM');
   server.close();
   setTimeout(() => process.exit(0), 1500).unref();
 }
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
 process.on('uncaughtException', (err) => {
   log.ts('error', err);
   patchState(name, { status: 'error', error: String(err) });
 });
+
+void main();

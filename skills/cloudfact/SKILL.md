@@ -1,16 +1,24 @@
 ---
 name: cloudfact
-description: Publish a folder or an HTML file generated on this machine to a public Cloudflare URL with one command (/cloudfact <path> [--private] [--name x] [--tunnel|--workers]). Use whenever the user asks to "host", "publish", "put online", "open in a browser" or "give me a link" for an HTML file or static site.
-argument-hint: <folder or file.html> [--private] [--name name] [--tunnel|--workers] [--restart]
+description: Publish a folder, an HTML file, or a running app (local port, or a port on a machine reachable over SSH) to a public Cloudflare URL with one command (/cloudfact <path> [--private] [--name x] [--tunnel|--workers] | /cloudfact expose <port> [--ssh user@host] [--private]). Use whenever the user asks to "host", "publish", "put online", "expose", "open in a browser" or "give me a link" for an HTML file, a static site or a server app.
+argument-hint: <folder or file.html> [--private] [--name name] [--tunnel|--workers] [--restart]  |  expose <port> [--ssh user@host] [--private]
 ---
 
 # /cloudfact — publish a static page to Cloudflare
 
-The `cloudfact` MCP server is available (tools `deploy`, `list`, `status`, `stop`, `remove`, `logs`, `doctor`).
+The `cloudfact` MCP server is available (tools `deploy`, `expose`, `list`, `status`, `stop`, `remove`, `logs`, `doctor`).
 If the MCP tools are not loaded in this session, use the equivalent CLI through the shell:
 `cloudfact deploy <path> [--private] [--name n] [--backend tunnel|workers] [--restart] --json`.
 
-## Steps
+## Apps with a server
+
+If the argument starts with `expose`, or the user wants to publish something that runs as a server (API, dashboard with a backend, dev server, WebSocket app):
+
+- App running on this machine: `expose` tool with `port` (start the app first if needed, in the background, and confirm it answers on 127.0.0.1:<port>).
+- App running on another machine: `expose` with `port` and `ssh: "user@host"` (plus `sshPort`/`identity` when given). The machine only needs key-based SSH access from here; nothing is installed there. If SSH fails, run `ssh -o BatchMode=yes user@host true` in the shell to show the real error.
+- `private: true` when the app is not meant for the public. Then reply with the URL exactly as in step 3 below.
+
+## Static pages
 
 1. **Resolve the path.** Arguments: `$ARGUMENTS`.
    - No argument: use the last HTML file or folder you generated in this conversation; otherwise look for `index.html` in the current directory. If it is still ambiguous, ask.

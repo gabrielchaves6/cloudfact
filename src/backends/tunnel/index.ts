@@ -6,7 +6,7 @@ import { HOME, HOST_SCRIPT, readConfig } from '../../config.js';
 import { log } from '../../logger.js';
 import { findCloudflared, installCloudflared } from '../../services/cloudflared.js';
 import { alive, deployDir, effectiveState, isLive, readLogs, readState, summarize, writeState } from '../../services/state.js';
-import type { DeployMode, DeployResult, DeployState } from '../../types.js';
+import type { DeployMode, DeployResult, DeployState, SshTarget } from '../../types.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -15,16 +15,29 @@ export interface TunnelTarget {
   mode: DeployMode;
   root: string | null;
   file: string | null;
+  /** proxy mode: port of the app (local, or on the SSH host) */
+  targetPort?: number | null;
+  ssh?: SshTarget | null;
   private: boolean;
   restart: boolean;
   timeoutMs: number;
 }
 
+const sameSsh = (a?: SshTarget | null, b?: SshTarget | null) =>
+  (a?.destination ?? null) === (b?.destination ?? null) &&
+  (a?.port ?? null) === (b?.port ?? null) &&
+  (a?.identity ?? null) === (b?.identity ?? null);
+
 export async function deployTunnel(t: TunnelTarget): Promise<DeployResult> {
   const existing = effectiveState(t.name);
   if (existing?.backend === 'tunnel' && isLive(existing)) {
     const sameTarget =
-      existing.mode === t.mode && existing.root === t.root && existing.file === t.file && Boolean(existing.key) === t.private;
+      existing.mode === t.mode &&
+      existing.root === t.root &&
+      existing.file === t.file &&
+      (existing.targetPort ?? null) === (t.targetPort ?? null) &&
+      sameSsh(existing.ssh, t.ssh) &&
+      Boolean(existing.key) === t.private;
     if (sameTarget && !t.restart) return { ...summarize(await waitForUrl(t.name, t.timeoutMs)), reused: true };
     await stopTunnel(t.name);
   }
@@ -36,6 +49,8 @@ export async function deployTunnel(t: TunnelTarget): Promise<DeployResult> {
     mode: t.mode,
     root: t.root,
     file: t.file,
+    targetPort: t.targetPort ?? null,
+    ssh: t.ssh ?? null,
     key: t.private ? crypto.randomBytes(32).toString('base64url') : null,
     status: 'starting',
     url: null,
@@ -77,7 +92,7 @@ async function waitForUrl(name: string, timeoutMs: number): Promise<DeployState>
 export async function stopTunnel(name: string): Promise<void> {
   const s = readState(name);
   if (!s) return;
-  const pids = [s.hostPid, s.tunnelPid];
+  const pids = [s.hostPid, s.tunnelPid, s.sshPid];
   for (const pid of pids) if (alive(pid)) process.kill(pid!, 'SIGTERM');
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline && pids.some(alive)) await sleep(150);
@@ -89,6 +104,7 @@ export async function stopTunnel(name: string): Promise<void> {
     privateUrl: null,
     hostPid: null,
     tunnelPid: null,
+    sshPid: null,
     stoppedAt: new Date().toISOString(),
   });
 }

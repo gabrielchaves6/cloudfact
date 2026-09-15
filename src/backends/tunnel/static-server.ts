@@ -3,13 +3,13 @@
  * No dotfiles, no path traversal, never follows links outside the root.
  * Private mode: without the cookie every route returns the gate page, which exchanges `#key=` for an HttpOnly cookie.
  */
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
+import { COOKIE_NAME, gateRequest } from './gate.js';
 
 export interface StaticOptions {
-  mode: 'dir' | 'file';
+  mode: 'dir' | 'file' | 'proxy';
   root?: string | null;
   file?: string | null;
   key?: string | null;
@@ -57,14 +57,6 @@ const BASE_HEADERS = {
   'Cache-Control': 'no-cache',
 };
 
-const GATE_HTML = `<!doctype html><html lang="en"><meta charset="utf-8"><title>cloudfact</title>
-<style>body{font:16px system-ui;margin:3rem;color:#333}</style><body><p id="m">Signing in…</p>
-<script>(async()=>{const el=document.getElementById('m');const m=location.hash.match(/key=([^&]+)/);
-if(!m){el.textContent='Private page: open it through the full link (with #key=…).';return}
-const r=await fetch('/api/session',{method:'POST',headers:{Authorization:'Bearer '+decodeURIComponent(m[1])}});
-if(r.ok){history.replaceState(null,'',location.pathname+location.search);location.reload()}
-else el.textContent='Invalid key.'})()</script></body></html>`;
-
 function send(res: ServerResponse, code: number, body: string | Buffer, headers: Record<string, string> = {}): void {
   const buf = Buffer.isBuffer(body) ? body : Buffer.from(body);
   res.writeHead(code, { ...BASE_HEADERS, 'Content-Length': buf.length, ...headers });
@@ -107,43 +99,15 @@ export function safeResolve(root: string, urlPath: string): string | null {
   return abs;
 }
 
-function timingEqual(a: string, b: string): boolean {
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && crypto.timingSafeEqual(x, y);
-}
-
-function hasCookie(req: IncomingMessage, name: string, key: string): boolean {
-  for (const part of (req.headers.cookie ?? '').split(';')) {
-    const [k, ...v] = part.trim().split('=');
-    if (k === name) return timingEqual(v.join('='), key);
-  }
-  return false;
-}
-
 export function createStaticHandler(opts: StaticOptions): (req: IncomingMessage, res: ServerResponse) => void {
   const root = opts.root ? path.resolve(opts.root) : null;
   const file = opts.file ? path.resolve(opts.file) : null;
-  const cookieName = opts.cookieName ?? 'cloudfact_access';
-  const key = opts.key ?? null;
+  const cookieName = opts.cookieName ?? COOKIE_NAME;
 
   return (req, res) => {
     const method = req.method ?? 'GET';
     const url = new URL(req.url ?? '/', 'http://localhost');
-
-    if (key) {
-      if (url.pathname === '/api/session' && method === 'POST') {
-        const auth = req.headers.authorization ?? '';
-        const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-        if (timingEqual(token, key)) {
-          return send(res, 204, '', { 'Set-Cookie': `${cookieName}=${key}; Path=/; HttpOnly; Secure; SameSite=Lax` });
-        }
-        return send(res, 401, '{"error":"invalid key"}', { 'Content-Type': 'application/json' });
-      }
-      if (!hasCookie(req, cookieName, key)) {
-        return send(res, 200, GATE_HTML, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-      }
-    }
+    if (gateRequest(req, res, opts.key, cookieName)) return;
 
     if (method !== 'GET' && method !== 'HEAD') return send(res, 405, 'method not allowed');
 

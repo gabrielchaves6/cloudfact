@@ -7,7 +7,10 @@ import { deleteWorker, deployWorkers } from './backends/workers/index.js';
 import { cloudflaredVersion, findCloudflared } from './services/cloudflared.js';
 import { effectiveState, listDeploys, readState, removeDeployDir, slug, summarize } from './services/state.js';
 import { credentials } from './services/wrangler.js';
-import type { Backend, DeployMode, DeployOptions, DeployResult, DeploySummary } from './types.js';
+import { spawnSync } from 'node:child_process';
+
+const hasSsh = (): boolean => spawnSync('sh', ['-c', 'command -v ssh'], { encoding: 'utf8' }).status === 0;
+import type { Backend, DeployMode, DeployOptions, DeployResult, DeploySummary, ExposeOptions } from './types.js';
 
 export { listDeploys, readLogs, summarize } from './services/state.js';
 export { loginWithDevice, loginWithToken, logout } from './services/auth.js';
@@ -49,6 +52,24 @@ export async function deploy(opts: DeployOptions = {}): Promise<DeployResult> {
   const common = { name, mode: t.mode, root: t.root, file: t.file, private: Boolean(opts.private) };
   if (backend === 'workers') return deployWorkers(common);
   return deployTunnel({ ...common, restart: Boolean(opts.restart), timeoutMs: opts.timeoutMs ?? 45_000 });
+}
+
+/** Publish an app that already listens on a port, here or on a machine reachable over SSH. Tunnel backend only. */
+export async function expose(opts: ExposeOptions): Promise<DeployResult> {
+  if (!Number.isInteger(opts.port) || opts.port < 1 || opts.port > 65535) throw new Error(`invalid port: ${String(opts.port)}`);
+  const ssh = opts.ssh?.destination ? { destination: opts.ssh.destination, port: opts.ssh.port, identity: opts.ssh.identity } : null;
+  const name = slug(opts.name ?? (ssh ? `${ssh.destination.split('@').pop()}-${opts.port}` : `port-${opts.port}`));
+  return deployTunnel({
+    name,
+    mode: 'proxy',
+    root: null,
+    file: null,
+    targetPort: opts.port,
+    ssh,
+    private: Boolean(opts.private),
+    restart: Boolean(opts.restart),
+    timeoutMs: opts.timeoutMs ?? 45_000,
+  });
 }
 
 export async function stop(name: string): Promise<{ name: string; stopped: boolean; note?: string }> {
@@ -108,6 +129,8 @@ export interface DoctorReport {
     | { loggedIn: true; source: 'token' | 'wrangler'; accountId: string | null; accountName: string | null }
     | { loggedIn: false; hint: string };
   defaultBackend: Backend;
+  /** ssh client available (needed for expose --ssh) */
+  ssh: boolean;
   deploys: { name: string; backend: Backend; status: string; url: string | null }[];
 }
 
@@ -126,6 +149,7 @@ export async function doctor(): Promise<DoctorReport> {
       ? { loggedIn: true, source: creds.source, accountId: creds.accountId, accountName: cfg.cloudflareAccountName ?? null }
       : { loggedIn: false, hint: 'run `cloudfact login --device` (browser) or `cloudfact login --token <token>`' },
     defaultBackend: creds ? 'workers' : 'tunnel',
+    ssh: hasSsh(),
     deploys: listDeploys().map((s) => ({ name: s.name, backend: s.backend, status: s.status, url: s.url ?? null })),
   };
 }

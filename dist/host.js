@@ -2,7 +2,7 @@ import { createRequire as __cloudfactRequire } from 'node:module'; const require
 
 // src/backends/tunnel/host.ts
 import fs5 from "fs";
-import http from "http";
+import http2 from "http";
 import path5 from "path";
 import { spawn } from "child_process";
 
@@ -110,8 +110,109 @@ function patchState(name2, patch) {
   return next;
 }
 
-// src/backends/tunnel/static-server.ts
+// src/backends/tunnel/proxy.ts
+import http from "http";
+import net from "net";
+
+// src/backends/tunnel/gate.ts
 import crypto from "crypto";
+var COOKIE_NAME = "cloudfact_access";
+var GATE_HTML = `<!doctype html><html lang="en"><meta charset="utf-8"><title>cloudfact</title>
+<style>body{font:16px system-ui;margin:3rem;color:#333}</style><body><p id="m">Signing in\u2026</p>
+<script>(async()=>{const el=document.getElementById('m');const m=location.hash.match(/key=([^&]+)/);
+if(!m){el.textContent='Private page: open it through the full link (with #key=\u2026).';return}
+const r=await fetch('/api/session',{method:'POST',headers:{Authorization:'Bearer '+decodeURIComponent(m[1])}});
+if(r.ok){history.replaceState(null,'',location.pathname+location.search);location.reload()}
+else el.textContent='Invalid key.'})()</script></body></html>`;
+function timingEqual(a, b) {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+}
+function hasAccessCookie(req, key, cookieName = COOKIE_NAME) {
+  for (const part of (req.headers.cookie ?? "").split(";")) {
+    const [k, ...v] = part.trim().split("=");
+    if (k === cookieName) return timingEqual(v.join("="), key);
+  }
+  return false;
+}
+function reply(res, code, body, headers) {
+  const buf = Buffer.from(body);
+  res.writeHead(code, { "Content-Length": buf.length, "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow", ...headers });
+  res.end(buf);
+}
+function gateRequest(req, res, key, cookieName = COOKIE_NAME) {
+  if (!key) return false;
+  const url = new URL(req.url ?? "/", "http://localhost");
+  if (url.pathname === "/api/session" && req.method === "POST") {
+    const auth = req.headers.authorization ?? "";
+    const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+    if (timingEqual(token, key)) {
+      reply(res, 204, "", { "Set-Cookie": `${cookieName}=${key}; Path=/; HttpOnly; Secure; SameSite=Lax` });
+    } else {
+      reply(res, 401, '{"error":"invalid key"}', { "Content-Type": "application/json" });
+    }
+    return true;
+  }
+  if (hasAccessCookie(req, key, cookieName)) return false;
+  reply(res, 200, GATE_HTML, { "Content-Type": "text/html; charset=utf-8" });
+  return true;
+}
+
+// src/backends/tunnel/proxy.ts
+var HOP_BY_HOP = /* @__PURE__ */ new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade"
+]);
+function createProxy(opts) {
+  const host = opts.targetHost ?? "127.0.0.1";
+  const port = opts.targetPort;
+  const handler = (req, res) => {
+    if (gateRequest(req, res, opts.key)) return;
+    const headers = {};
+    for (const [k, v] of Object.entries(req.headers)) if (!HOP_BY_HOP.has(k)) headers[k] = v;
+    headers["x-forwarded-proto"] = "https";
+    headers["x-forwarded-host"] = req.headers.host;
+    headers["x-forwarded-for"] = req.socket.remoteAddress ?? "";
+    const upstream = http.request({ host, port, method: req.method, path: req.url, headers }, (up) => {
+      res.writeHead(up.statusCode ?? 502, up.headers);
+      up.pipe(res);
+    });
+    upstream.on("error", () => {
+      if (!res.headersSent) res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
+      res.end(`cloudfact: upstream ${host}:${port} is not reachable`);
+    });
+    req.pipe(upstream);
+  };
+  const upgrade = (req, socket, head) => {
+    if (opts.key && !hasAccessCookie(req, opts.key)) {
+      socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+      return;
+    }
+    const target = net.connect(port, host, () => {
+      const lines = [`${req.method} ${req.url} HTTP/${req.httpVersion}`];
+      for (let i = 0; i < req.rawHeaders.length; i += 2) lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
+      target.write(lines.join("\r\n") + "\r\n\r\n");
+      if (head.length) target.write(head);
+      socket.pipe(target).pipe(socket);
+    });
+    const drop = () => {
+      socket.destroy();
+      target.destroy();
+    };
+    target.on("error", drop);
+    socket.on("error", drop);
+  };
+  return { handler, upgrade };
+}
+
+// src/backends/tunnel/static-server.ts
 import fs4 from "fs";
 import path4 from "path";
 var MIME = {
@@ -153,13 +254,6 @@ var BASE_HEADERS = {
   "Referrer-Policy": "no-referrer",
   "Cache-Control": "no-cache"
 };
-var GATE_HTML = `<!doctype html><html lang="en"><meta charset="utf-8"><title>cloudfact</title>
-<style>body{font:16px system-ui;margin:3rem;color:#333}</style><body><p id="m">Signing in\u2026</p>
-<script>(async()=>{const el=document.getElementById('m');const m=location.hash.match(/key=([^&]+)/);
-if(!m){el.textContent='Private page: open it through the full link (with #key=\u2026).';return}
-const r=await fetch('/api/session',{method:'POST',headers:{Authorization:'Bearer '+decodeURIComponent(m[1])}});
-if(r.ok){history.replaceState(null,'',location.pathname+location.search);location.reload()}
-else el.textContent='Invalid key.'})()</script></body></html>`;
 function send(res, code, body, headers = {}) {
   const buf = Buffer.isBuffer(body) ? body : Buffer.from(body);
   res.writeHead(code, { ...BASE_HEADERS, "Content-Length": buf.length, ...headers });
@@ -191,39 +285,14 @@ function safeResolve(root, urlPath) {
   if (abs !== root && !abs.startsWith(root + path4.sep)) return null;
   return abs;
 }
-function timingEqual(a, b) {
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && crypto.timingSafeEqual(x, y);
-}
-function hasCookie(req, name2, key) {
-  for (const part of (req.headers.cookie ?? "").split(";")) {
-    const [k, ...v] = part.trim().split("=");
-    if (k === name2) return timingEqual(v.join("="), key);
-  }
-  return false;
-}
 function createStaticHandler(opts) {
   const root = opts.root ? path4.resolve(opts.root) : null;
   const file = opts.file ? path4.resolve(opts.file) : null;
-  const cookieName = opts.cookieName ?? "cloudfact_access";
-  const key = opts.key ?? null;
+  const cookieName = opts.cookieName ?? COOKIE_NAME;
   return (req, res) => {
     const method = req.method ?? "GET";
     const url = new URL(req.url ?? "/", "http://localhost");
-    if (key) {
-      if (url.pathname === "/api/session" && method === "POST") {
-        const auth = req.headers.authorization ?? "";
-        const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-        if (timingEqual(token, key)) {
-          return send(res, 204, "", { "Set-Cookie": `${cookieName}=${key}; Path=/; HttpOnly; Secure; SameSite=Lax` });
-        }
-        return send(res, 401, '{"error":"invalid key"}', { "Content-Type": "application/json" });
-      }
-      if (!hasCookie(req, cookieName, key)) {
-        return send(res, 200, GATE_HTML, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
-      }
-    }
+    if (gateRequest(req, res, opts.key, cookieName)) return;
     if (method !== "GET" && method !== "HEAD") return send(res, 405, "method not allowed");
     let abs;
     if (opts.mode === "file") {
@@ -274,24 +343,91 @@ if (!name) {
   log.ts("usage: host.js <name>");
   process.exit(2);
 }
-var initial = readState(name);
-if (!initial) {
+var loaded = readState(name);
+if (!loaded) {
   log.ts("no state.json for", name);
   process.exit(2);
 }
+var initial = loaded;
 var dir = deployDir(name);
 var stopping = false;
 var tunnel = null;
+var ssh = null;
 var restarts = 0;
-var server = http.createServer(createStaticHandler({ mode: initial.mode, root: initial.root, file: initial.file, key: initial.key }));
-server.keepAliveTimeout = 65e3;
-server.listen(0, "127.0.0.1", () => {
-  const address = server.address();
-  const port = typeof address === "object" && address ? address.port : 0;
-  patchState(name, { hostPid: process.pid, port, status: "starting", local: `http://127.0.0.1:${port}` });
-  log.ts("local server on port", port);
-  startTunnel(port);
-});
+var sshRestarts = 0;
+async function main() {
+  let server;
+  if (initial.mode === "proxy") {
+    let targetPort = initial.targetPort;
+    if (initial.ssh) {
+      targetPort = await freePort();
+      patchState(name, { forwardPort: targetPort });
+      startSshForward(targetPort);
+    }
+    const proxy = createProxy({ targetPort, key: initial.key });
+    server = http2.createServer(proxy.handler);
+    server.on("upgrade", proxy.upgrade);
+  } else {
+    server = http2.createServer(createStaticHandler({ mode: initial.mode, root: initial.root, file: initial.file, key: initial.key }));
+  }
+  server.keepAliveTimeout = 65e3;
+  server.listen(0, "127.0.0.1", () => {
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    patchState(name, { hostPid: process.pid, port, status: "starting", local: `http://127.0.0.1:${port}` });
+    log.ts("local server on port", port);
+    startTunnel(port);
+  });
+  process.on("SIGTERM", () => shutdown(server));
+  process.on("SIGINT", () => shutdown(server));
+}
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = http2.createServer();
+    probe.listen(0, "127.0.0.1", () => {
+      const address = probe.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      probe.close(() => resolve(port));
+    });
+    probe.on("error", reject);
+  });
+}
+function startSshForward(localPort) {
+  if (stopping || !initial.ssh) return;
+  const { destination, port, identity } = initial.ssh;
+  const args = [
+    "-N",
+    "-o",
+    "ExitOnForwardFailure=yes",
+    "-o",
+    "ServerAliveInterval=30",
+    "-o",
+    "ServerAliveCountMax=3",
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "StrictHostKeyChecking=accept-new",
+    "-L",
+    `127.0.0.1:${localPort}:127.0.0.1:${initial.targetPort}`
+  ];
+  if (port) args.push("-p", String(port));
+  if (identity) args.push("-i", identity);
+  args.push(destination);
+  const logFd = fs5.openSync(path5.join(dir, "ssh.log"), "a");
+  ssh = spawn("ssh", args, { stdio: ["ignore", logFd, logFd] });
+  fs5.closeSync(logFd);
+  patchState(name, { sshPid: ssh.pid ?? null });
+  log.ts(`ssh forward 127.0.0.1:${localPort} \u2192 ${destination}:${initial.targetPort}`);
+  ssh.on("exit", (code, signal) => {
+    ssh = null;
+    if (stopping) return;
+    sshRestarts += 1;
+    const delay = Math.min(3e4, 2e3 * sshRestarts);
+    log.ts(`ssh exited (code=${code} sig=${signal}); reconnecting in ${delay / 1e3}s`);
+    patchState(name, { sshPid: null, error: `ssh forward down (exit ${code}); reconnecting` });
+    setTimeout(() => startSshForward(localPort), delay);
+  });
+}
 function startTunnel(port) {
   if (stopping) return;
   const bin = findCloudflared(readConfig());
@@ -335,18 +471,26 @@ function startTunnel(port) {
     setTimeout(() => startTunnel(port), delay);
   });
 }
-function shutdown() {
+function shutdown(server) {
   if (stopping) return;
   stopping = true;
   log.ts("shutting down");
-  patchState(name, { status: "stopped", url: null, privateUrl: null, hostPid: null, tunnelPid: null, stoppedAt: (/* @__PURE__ */ new Date()).toISOString() });
+  patchState(name, {
+    status: "stopped",
+    url: null,
+    privateUrl: null,
+    hostPid: null,
+    tunnelPid: null,
+    sshPid: null,
+    stoppedAt: (/* @__PURE__ */ new Date()).toISOString()
+  });
   tunnel?.kill("SIGTERM");
+  ssh?.kill("SIGTERM");
   server.close();
   setTimeout(() => process.exit(0), 1500).unref();
 }
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
 process.on("uncaughtException", (err) => {
   log.ts("error", err);
   patchState(name, { status: "error", error: String(err) });
 });
+void main();

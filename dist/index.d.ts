@@ -3,7 +3,8 @@ import { ZodRawShape, z } from 'zod';
 
 type Backend = 'tunnel' | 'workers';
 type BackendChoice = Backend | 'auto' | 'pages';
-type DeployMode = 'dir' | 'file';
+/** dir/file = static site; proxy = app behind a reverse proxy (`expose`). */
+type DeployMode = 'dir' | 'file' | 'proxy';
 type DeployStatus = 'starting' | 'running' | 'reconnecting' | 'stopped' | 'dead' | 'error' | 'deploying' | 'deployed';
 interface DeployState {
     name: string;
@@ -25,12 +26,31 @@ interface DeployState {
     restarts?: number;
     urlAt?: string;
     stoppedAt?: string;
+    targetPort?: number | null;
+    ssh?: SshTarget | null;
+    /** Local port of the SSH forward (proxy → forward → remote app). */
+    forwardPort?: number | null;
+    sshPid?: number | null;
     files?: number;
     versionId?: string | null;
     deployedAt?: string;
 }
 /** State without the private key (privateUrl already carries it). */
 type DeploySummary = Omit<DeployState, 'key'>;
+interface SshTarget {
+    /** user@host or host */
+    destination: string;
+    port?: number;
+    identity?: string;
+}
+interface ExposeOptions {
+    port: number;
+    name?: string;
+    private?: boolean;
+    ssh?: SshTarget | null;
+    restart?: boolean;
+    timeoutMs?: number;
+}
 interface DeployOptions {
     path?: string;
     name?: string;
@@ -87,6 +107,8 @@ declare function installCloudflared(onProgress?: (msg: string) => void): Promise
 
 declare function resolveBackend(choice: DeployOptions['backend']): Backend;
 declare function deploy(opts?: DeployOptions): Promise<DeployResult>;
+/** Publish an app that already listens on a port, here or on a machine reachable over SSH. Tunnel backend only. */
+declare function expose(opts: ExposeOptions): Promise<DeployResult>;
 declare function stop(name: string): Promise<{
     name: string;
     stopped: boolean;
@@ -130,6 +152,8 @@ interface DoctorReport {
         hint: string;
     };
     defaultBackend: Backend;
+    /** ssh client available (needed for expose --ssh) */
+    ssh: boolean;
     deploys: {
         name: string;
         backend: Backend;
@@ -158,4 +182,4 @@ interface ToolDefinition<Schema extends ZodRawShape = ZodRawShape> {
 
 declare const tools: ToolDefinition<any>[];
 
-export { type Backend, type BackendChoice, type Credentials, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type StatusResult, type ToolDefinition, VERSION, createServer, deploy, doctor, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, readLogs, remove, resolveBackend, status, stop, stopAll, summarize, tools };
+export { type Backend, type BackendChoice, type Credentials, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type ExposeOptions, type SshTarget, type StatusResult, type ToolDefinition, VERSION, createServer, deploy, doctor, expose, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, readLogs, remove, resolveBackend, status, stop, stopAll, summarize, tools };

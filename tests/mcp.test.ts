@@ -25,7 +25,7 @@ const text = (r: Awaited<ReturnType<Client['callTool']>>) => (r.content as { tex
 describe('MCP server', () => {
   it('exposes the tools with annotations', async () => {
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(['deploy', 'doctor', 'list', 'logs', 'remove', 'status', 'stop']);
+    expect(tools.map((t) => t.name).sort()).toEqual(['deploy', 'doctor', 'expose', 'list', 'logs', 'remove', 'status', 'stop']);
     expect(tools.find((t) => t.name === 'list')?.annotations?.readOnlyHint).toBe(true);
     expect(tools.find((t) => t.name === 'remove')?.annotations?.destructiveHint).toBe(true);
   });

@@ -5,6 +5,7 @@ const HELP = `cloudfact ${cf.VERSION} — publish static pages from this machine
 
 usage:
   cloudfact deploy [path] [--name n] [--private] [--backend auto|tunnel|workers] [--restart] [--json]
+  cloudfact expose <port> [--name n] [--private] [--ssh user@host] [--ssh-port 22] [--identity key] [--restart] [--json]
   cloudfact list [--json]
   cloudfact status <name> [--json]
   cloudfact stop <name> | --all
@@ -18,6 +19,7 @@ usage:
   cloudfact mcp                                  (MCP server over stdio)
 
 path = a folder (served whole, index.html at the root) or a single .html file.
+expose = publish an app already listening on a port, here or on a machine reachable over SSH (HTTP + WebSocket).
 backend auto = workers (fixed *.workers.dev URL) when signed in to Cloudflare, otherwise quick tunnel (trycloudflare.com, no account).`;
 
 export async function main(argv: string[]): Promise<number> {
@@ -36,6 +38,9 @@ export async function main(argv: string[]): Promise<number> {
       token: { type: 'string' },
       'account-id': { type: 'string' },
       device: { type: 'boolean', default: false },
+      ssh: { type: 'string' },
+      'ssh-port': { type: 'string' },
+      identity: { type: 'string' },
     },
   });
   const [cmd, ...rest] = positionals;
@@ -63,6 +68,26 @@ export async function main(argv: string[]): Promise<number> {
         console.log(`${r.reused ? 'already live' : 'published'}: ${r.name} (${r.backend})`);
         console.log(`URL: ${r.privateUrl ?? r.url}`);
         if (r.local) console.log(`local: ${r.local}`);
+      }
+      return 0;
+    }
+    case 'expose': {
+      const port = Number(need(rest[0], 'the port'));
+      const r = await cf.expose({
+        port,
+        name: values.name,
+        private: values.private,
+        restart: values.restart,
+        ssh: values.ssh
+          ? { destination: values.ssh, port: values['ssh-port'] ? Number(values['ssh-port']) : undefined, identity: values.identity }
+          : null,
+      });
+      if (values.json) print(r);
+      else {
+        console.log(
+          `${r.reused ? 'already live' : 'published'}: ${r.name} → ${r.ssh ? `${r.ssh.destination}:` : 'localhost:'}${r.targetPort}`,
+        );
+        console.log(`URL: ${r.privateUrl ?? r.url}`);
       }
       return 0;
     }

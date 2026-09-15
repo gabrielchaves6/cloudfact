@@ -1,6 +1,7 @@
 export type Backend = 'tunnel' | 'workers';
 export type BackendChoice = Backend | 'auto' | 'pages';
-export type DeployMode = 'dir' | 'file';
+/** dir/file = static site; proxy = app behind a reverse proxy (`expose`). */
+export type DeployMode = 'dir' | 'file' | 'proxy';
 export type DeployStatus = 'starting' | 'running' | 'reconnecting' | 'stopped' | 'dead' | 'error' | 'deploying' | 'deployed';
 
 export interface DeployState {
@@ -24,6 +25,12 @@ export interface DeployState {
   restarts?: number;
   urlAt?: string;
   stoppedAt?: string;
+  // proxy (expose)
+  targetPort?: number | null;
+  ssh?: SshTarget | null;
+  /** Local port of the SSH forward (proxy → forward → remote app). */
+  forwardPort?: number | null;
+  sshPid?: number | null;
   // workers
   files?: number;
   versionId?: string | null;
@@ -32,6 +39,22 @@ export interface DeployState {
 
 /** State without the private key (privateUrl already carries it). */
 export type DeploySummary = Omit<DeployState, 'key'>;
+
+export interface SshTarget {
+  /** user@host or host */
+  destination: string;
+  port?: number;
+  identity?: string;
+}
+
+export interface ExposeOptions {
+  port: number;
+  name?: string;
+  private?: boolean;
+  ssh?: SshTarget | null;
+  restart?: boolean;
+  timeoutMs?: number;
+}
 
 export interface DeployOptions {
   path?: string;

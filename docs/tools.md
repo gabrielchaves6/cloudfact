@@ -16,6 +16,22 @@ _mutating, idempotent_
 | `backend` | `auto` \| `tunnel` \| `workers` | no | auto = workers when signed in to Cloudflare, otherwise tunnel |
 | `restart` | boolean | no | Restart even if already live (yields a new URL on tunnel) |
 
+## `expose` — Expose a running app
+
+Publish an app that is already listening on a port to a public *.trycloudflare.com URL (tunnel backend). Without ssh, the port is on this machine. With ssh (user@host), the app runs on another machine: cloudfact opens an SSH port-forward to it and publishes through here — nothing to install remotely (key-based SSH access required). HTTP and WebSocket traffic is proxied. private=true adds the same #key gate as static deploys. Idempotent: the same port/host already live returns the existing URL (reused=true).
+
+_mutating, idempotent_
+
+| parameter | type | required | description |
+| --- | --- | --- | --- |
+| `port` | number | yes | Port the app listens on (locally, or on the SSH host) |
+| `name` | string | no | Deploy name (slug). Defaults to port-<port> or <host>-<port> |
+| `private` | boolean | no | Key-protected: only whoever opens privateUrl (#key=...) reaches the app |
+| `ssh` | string | no | SSH destination of the machine running the app, e.g. ubuntu@10.0.0.5 or a Host alias from ~/.ssh/config |
+| `sshPort` | number | no | SSH port (default 22) |
+| `identity` | string | no | Path to the SSH private key (default: ssh agent / ~/.ssh/config) |
+| `restart` | boolean | no | Restart even if already live (yields a new URL) |
+
 ## `list` — List deploys
 
 List every cloudfact deploy with backend, status and URL.
