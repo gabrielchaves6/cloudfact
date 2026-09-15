@@ -89,6 +89,8 @@ The API token needs the "Edit Cloudflare Workers" template plus **Access: Apps a
 
 Verified end-to-end on a real Cloudflare account (2026-09-15): the team, the one-time PIN provider and the application were created through the API alone, no Zero Trust checkout or payment method was required, and the `*.workers.dev` URL redirects to the `<team>.cloudflareaccess.com` sign-in page before any request reaches the Worker.
 
+Plan limit: cloudfact uses the **Zero Trust Free** plan, which allows **50 seats per Cloudflare account**. A seat is one person who signs in, counted across every `--access` deploy in the account, so keep the sum of distinct emails you allow under 50 (Cloudflare blocks the 51st user until you upgrade). Seats of people who stop signing in can be released automatically from Zero Trust → Settings → "Remove inactive users from seats".
+
 Local server safety: serves only what is inside the published folder, never dotfiles, no path traversal. A single `.html` is served alone (relative assets are not included; publish the folder in that case).
 
 ## MCP

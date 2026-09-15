@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Changed
+
+- README documents the Zero Trust Free limit for `--access`: 50 seats per Cloudflare account, shared by all deploys.
+
 ## [0.7.1] - 2026-09-15
 
 ### Changed
