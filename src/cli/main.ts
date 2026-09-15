@@ -4,10 +4,14 @@ import * as cf from '../cloudfact.js';
 const HELP = `cloudfact ${cf.VERSION} — publish static pages from this machine to Cloudflare
 
 usage:
-  cloudfact deploy [path] [--name n] [--public] [--expires 24h] [--access a@x.com,b@y.com] [--backend auto|tunnel|workers] [--restart] [--json]
+  cloudfact deploy [path] [--name n] [--public] [--expires 24h] [--access a@x.com,b@y.com] [--project p] [--backend auto|tunnel|workers] [--restart] [--json]
   cloudfact expose <port> [--name n] [--public] [--expires 24h] [--ssh user@host] [--ssh-port 22] [--identity key] [--strict-host-key] [--restart] [--json]
   cloudfact rotate <name> [--expires 24h]
   cloudfact list [--json]
+  cloudfact catalog [--project p] [--publish] [--access a@x.com] [--json]
+                                                 (every cloudfact in the Cloudflare account, grouped by project;
+                                                  --publish turns the catalog itself into a page)
+  cloudfact project <name> <project|->            (file a deploy under a project; "-" clears it)
   cloudfact status <name> [--json]
   cloudfact stop <name> | --all
   cloudfact rm <name>
@@ -47,6 +51,8 @@ export async function main(argv: string[]): Promise<number> {
       expires: { type: 'string' },
       'strict-host-key': { type: 'boolean', default: false },
       access: { type: 'string' },
+      project: { type: 'string' },
+      publish: { type: 'boolean' },
     },
   });
   const [cmd, ...rest] = positionals;
@@ -69,6 +75,7 @@ export async function main(argv: string[]): Promise<number> {
         private: values.private,
         expires: values.expires,
         access: values.access ? values.access.split(',') : undefined,
+        project: values.project,
         backend: values.backend as cf.BackendChoice,
         restart: values.restart,
       });
@@ -105,6 +112,46 @@ export async function main(argv: string[]): Promise<number> {
         );
         console.log(`URL: ${r.privateUrl ?? r.url}`);
       }
+      return 0;
+    }
+    case 'catalog': {
+      if (values.publish) {
+        const r = await cf.publishCatalog({
+          name: values.name,
+          project: values.project,
+          access: values.access ? values.access.split(',') : undefined,
+          public: values.public,
+        });
+        if (values.json) print(r);
+        else {
+          console.log(`catalog published: ${r.privateUrl ?? r.url}`);
+          if (r.access) console.log(`access: sign-in required (${r.access.emails.join(', ')}) via ${r.access.teamDomain}`);
+        }
+        return 0;
+      }
+      const c = await cf.catalog({ project: values.project });
+      if (values.json) print(c);
+      else {
+        const total = c.projects.reduce((n, p) => n + p.deploys.length, 0);
+        if (!total) console.log('no cloudfact deploys in this Cloudflare account yet');
+        console.log(`account: ${c.accountName ?? c.accountId}${c.subdomain ? ` (${c.subdomain}.workers.dev)` : ''}`);
+        for (const group of c.projects) {
+          console.log(`\n${group.project ?? '(no project)'}`);
+          for (const d of group.deploys) {
+            const where = d.inAccount ? (d.local ? '' : ' [not on this machine]') : ' [local tunnel]';
+            const who = d.access ? ` sign-in: ${d.access.emails.join(', ') || 'Cloudflare Access'}` : '';
+            console.log(`  ${d.name.padEnd(24)} ${(d.url ?? '-').padEnd(46)}${where}${who}`);
+          }
+        }
+      }
+      return 0;
+    }
+    case 'project': {
+      const name = need(rest[0], 'the deploy name');
+      const project = need(rest[1], 'the project name (or "-" to clear)');
+      const entry = await cf.setProject(name, project === '-' ? null : project);
+      if (values.json) print(entry);
+      else console.log(`${entry.name} → ${entry.project ?? '(no project)'}`);
       return 0;
     }
     case 'list':

@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-15
+
+### Added
+
+- Account catalog: `cloudfact catalog` lists every cloudfact in the Cloudflare account, grouped by project, taking the account as the source of truth (deploys made from another machine are included). Each entry reports visibility (public, private key link, Cloudflare Access sign-in) and kind (static files or an app with its own server). Workers are tagged `cloudfact`, `cloudfact:project:<p>`, `cloudfact:vis:<v>` and `cloudfact:kind:<k>`, so one API call rebuilds the catalog.
+- `deploy --project <p>` / `expose --project <p>` file a deploy under a project; `cloudfact project <name> <project>` moves one without redeploying.
+- `cloudfact catalog --publish` publishes the catalog itself as a page: one card per deploy with a live preview of the public ones, visibility and kind badges, search, list view and a filter per project.
+- MCP tools `catalog` and `project`.
+
 ## [0.7.4] - 2026-09-15
 
 ### Fixed

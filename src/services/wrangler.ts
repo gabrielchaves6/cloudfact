@@ -7,6 +7,15 @@ import type { Credentials } from '../types.js';
 export const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, '');
 
 /** Cloudflare credentials: API token (env/config) or wrangler's OAuth login. */
+/** The OAuth access token wrangler stores after `login --device`; usable as a REST API bearer. */
+export function oauthToken(): string | null {
+  try {
+    return /oauth_token\s*=\s*"([^"]+)"/.exec(fs.readFileSync(WRANGLER_CONFIG, 'utf8'))?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function credentials(cfg: Config = readConfig()): Credentials | null {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID ?? cfg.cloudflareAccountId ?? null;
   const token = process.env.CLOUDFLARE_API_TOKEN ?? cfg.cloudflareApiToken;

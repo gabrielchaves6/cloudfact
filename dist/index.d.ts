@@ -5,6 +5,10 @@ type Backend = 'tunnel' | 'workers';
 type BackendChoice = Backend | 'auto' | 'pages';
 /** dir/file = static site; proxy = app behind a reverse proxy (`expose`). */
 type DeployMode = 'dir' | 'file' | 'proxy';
+/** Who can open a deploy: anyone, whoever holds the key link, or the emails allowed by Cloudflare Access. */
+type Visibility = 'public' | 'private' | 'access';
+/** Static files uploaded/served, or an app with its own server behind the proxy. */
+type DeployKind = 'static' | 'app';
 type DeployStatus = 'starting' | 'running' | 'reconnecting' | 'stopped' | 'dead' | 'error' | 'deploying' | 'deployed';
 interface DeployState {
     name: string;
@@ -34,6 +38,8 @@ interface DeployState {
     forwardPort?: number | null;
     sshPid?: number | null;
     files?: number;
+    /** Project this deploy belongs to in the account catalog. */
+    project?: string | null;
     /** Cloudflare Access app in front of this deploy (identity sign-in). */
     access?: {
         appId: string;
@@ -63,6 +69,8 @@ interface ExposeOptions {
     /** Key lifetime, e.g. "30m", "24h", "7d". Default: no expiry. */
     expires?: string;
     ssh?: SshTarget | null;
+    /** Project to file this deploy under in the account catalog. */
+    project?: string;
     restart?: boolean;
     timeoutMs?: number;
 }
@@ -77,12 +85,44 @@ interface DeployOptions {
     expires?: string;
     /** Emails allowed to sign in through Cloudflare Access (workers backend). Replaces the key gate. */
     access?: string[];
+    /** Project to file this deploy under in the account catalog. */
+    project?: string;
     backend?: BackendChoice;
     restart?: boolean;
     timeoutMs?: number;
 }
 interface DeployResult extends DeploySummary {
     reused: boolean;
+}
+/** One deploy as seen from the Cloudflare account (plus what this machine knows about it). */
+interface CatalogEntry {
+    name: string;
+    project: string | null;
+    url: string | null;
+    /** True when the deploy exists in the Cloudflare account (workers). Quick tunnels are local-only. */
+    inAccount: boolean;
+    /** True when this machine still has the deploy's local record. */
+    local: boolean;
+    access: {
+        emails: string[];
+        appId: string;
+    } | null;
+    visibility: Visibility;
+    kind: DeployKind;
+    hasAssets: boolean;
+    createdAt: string | null;
+    modifiedAt: string | null;
+    backend: Backend;
+    status: DeployStatus;
+}
+interface CatalogResult {
+    accountId: string;
+    accountName: string | null;
+    subdomain: string | null;
+    projects: {
+        project: string | null;
+        deploys: CatalogEntry[];
+    }[];
 }
 interface Credentials {
     source: 'token' | 'wrangler';
@@ -93,6 +133,29 @@ interface Credentials {
 declare function listDeploys(): DeployState[];
 declare function summarize(state: DeployState): DeploySummary;
 declare function readLogs(name: string, lines?: number): Record<string, string>;
+
+declare const VERSION: string;
+
+/**
+ * Account-wide catalog: every cloudfact deploy that lives in the Cloudflare account, not just the ones
+ * this machine remembers. Cloudflare Workers carry script tags, so cloudfact marks what it creates with
+ * `cloudfact` plus `cloudfact:project:<project>`; listing the account's scripts is then enough to rebuild
+ * the whole picture from any machine, even after a reinstall.
+ *
+ * Quick tunnels have no account-side resource: they exist only while the machine that started them runs,
+ * so they can only ever come from local state (`local: true`, `inAccount: false`).
+ */
+
+/**
+ * The account's cloudfact deploys, grouped by project, merged with what this machine knows.
+ * Three API calls: scripts, the workers.dev subdomain and (best effort) the Access applications.
+ */
+declare function catalog(opts?: {
+    project?: string;
+    fetchImpl?: typeof fetch;
+}): Promise<CatalogResult>;
+/** Files an existing deploy under a project (or clears it with null), without redeploying. */
+declare function setProject(name: string, project: string | null, fetchImpl?: typeof fetch): Promise<CatalogEntry>;
 
 interface LoginResult {
     ok: true;
@@ -122,8 +185,6 @@ declare function logout(): {
     note?: string;
 };
 
-declare const VERSION: string;
-
 /** Downloads the official cloudflared into ~/.cloudfact/bin (Linux/macOS) and returns its path. */
 declare function installCloudflared(onProgress?: (msg: string) => void): Promise<string>;
 
@@ -131,6 +192,18 @@ declare function resolveBackend(choice: DeployOptions['backend']): Backend;
 declare function deploy(opts?: DeployOptions): Promise<DeployResult>;
 /** Publish an app that already listens on a port, here or on a machine reachable over SSH. Tunnel backend only. Private by default. */
 declare function expose(opts: ExposeOptions): Promise<DeployResult>;
+/**
+ * Publishes the catalog itself: a page with one card per cloudfact in the account, grouped by project,
+ * showing whether each is public, key-gated or behind sign-in, and static or a server app. Private by
+ * default, like every other deploy.
+ */
+declare function publishCatalog(opts?: {
+    name?: string;
+    project?: string;
+    access?: string[];
+    public?: boolean;
+    title?: string;
+}): Promise<DeployResult>;
 /**
  * Issues a new private key (and optional expiry) for a live tunnel deploy without restarting it: the old
  * link and every session cookie stop working immediately. On a public deploy this turns it private.
@@ -211,4 +284,4 @@ interface ToolDefinition<Schema extends ZodRawShape = ZodRawShape> {
 
 declare const tools: ToolDefinition<any>[];
 
-export { type Backend, type BackendChoice, type Credentials, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type ExposeOptions, type SshTarget, type StatusResult, type ToolDefinition, VERSION, createServer, deploy, doctor, expose, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, readLogs, remove, resolveBackend, rotate, status, stop, stopAll, summarize, tools };
+export { type Backend, type BackendChoice, type CatalogEntry, type CatalogResult, type Credentials, type DeployKind, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type ExposeOptions, type SshTarget, type StatusResult, type ToolDefinition, VERSION, type Visibility, catalog, createServer, deploy, doctor, expose, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, publishCatalog, readLogs, remove, resolveBackend, rotate, setProject, status, stop, stopAll, summarize, tools };

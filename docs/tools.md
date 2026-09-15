@@ -44,6 +44,29 @@ _read-only_
 
 No parameters.
 
+## `catalog` — Account catalog
+
+Every cloudfact in the user's Cloudflare account, grouped by project, as the account itself sees them (so deploys made from another machine show up too). Each entry says whether it is public, a private key link or behind Cloudflare Access sign-in, and whether it serves static files or an app with its own server. Quick tunnels have no account-side resource and appear only when this machine still has their record (inAccount=false). publish=true turns the catalog into a browsable page and returns its URL.
+
+_mutating_
+
+| parameter | type | required | description |
+| --- | --- | --- | --- |
+| `project` | string | no | Only deploys filed under this project |
+| `publish` | boolean | no | Publish the catalog as a page and return its URL |
+| `access` | array | no | With publish: emails allowed to sign in to the catalog page |
+
+## `project` — Set project
+
+File a deploy under a project in the account catalog (or pass project=null to clear it). Takes effect without redeploying.
+
+_mutating, idempotent_
+
+| parameter | type | required | description |
+| --- | --- | --- | --- |
+| `name` | string | yes | Deploy name |
+| `project` | string | yes | Project name, or null to clear |
+
 ## `status` — Deploy status
 
 State of one deploy, including an HTTP check of its public URL (reachable/httpStatus).

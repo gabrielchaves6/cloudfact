@@ -5,6 +5,8 @@ import { HOME, VERSION, readConfig } from './config.js';
 import { deployTunnel, newKey, stopTunnel } from './backends/tunnel/index.js';
 import { rotateWorkersKey } from './backends/workers/index.js';
 import { expiryFrom } from './services/duration.js';
+import { catalog as readCatalog } from './services/catalog.js';
+import { galleryHtml } from './services/gallery.js';
 import { deleteWorker, deployWorkers } from './backends/workers/index.js';
 import { cloudflaredVersion, findCloudflared } from './services/cloudflared.js';
 import { effectiveState, isLive, listDeploys, readState, removeDeployDir, slug, summarize, writeState } from './services/state.js';
@@ -15,6 +17,7 @@ const hasSsh = (): boolean => spawnSync('sh', ['-c', 'command -v ssh'], { encodi
 import type { Backend, DeployMode, DeployOptions, DeployResult, DeploySummary, ExposeOptions } from './types.js';
 
 export { listDeploys, readLogs, summarize } from './services/state.js';
+export { catalog, setProject } from './services/catalog.js';
 export { loginWithDevice, loginWithToken, logout } from './services/auth.js';
 export { installCloudflared } from './services/cloudflared.js';
 export { VERSION } from './config.js';
@@ -64,11 +67,13 @@ export async function deploy(opts: DeployOptions = {}): Promise<DeployResult> {
       key: priv ? newKey() : null,
       keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
       access: opts.access ?? null,
+      project: opts.project ?? null,
     });
   }
   return deployTunnel({
     ...common,
     keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
+    project: opts.project ?? null,
     restart: Boolean(opts.restart),
     timeoutMs: opts.timeoutMs ?? 45_000,
   });
@@ -91,8 +96,31 @@ export async function expose(opts: ExposeOptions): Promise<DeployResult> {
     ssh,
     private: priv,
     keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
+    project: opts.project ?? null,
     restart: Boolean(opts.restart),
     timeoutMs: opts.timeoutMs ?? 45_000,
+  });
+}
+
+/**
+ * Publishes the catalog itself: a page with one card per cloudfact in the account, grouped by project,
+ * showing whether each is public, key-gated or behind sign-in, and static or a server app. Private by
+ * default, like every other deploy.
+ */
+export async function publishCatalog(
+  opts: { name?: string; project?: string; access?: string[]; public?: boolean; title?: string } = {},
+): Promise<DeployResult> {
+  const c = await readCatalog();
+  const dir = path.join(HOME, 'catalog');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(dir, 'index.html'), galleryHtml(c, { title: opts.title }));
+  return deploy({
+    path: dir,
+    name: opts.name ?? 'cloudfacts',
+    project: opts.project ?? 'cloudfact',
+    access: opts.access,
+    public: opts.public,
+    backend: 'workers',
   });
 }
 

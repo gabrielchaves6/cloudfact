@@ -93,6 +93,28 @@ Plan limit: cloudfact uses the **Zero Trust Free** plan, which allows **50 seats
 
 Local server safety: serves only what is inside the published folder, never dotfiles, no path traversal. A single `.html` is served alone (relative assets are not included; publish the folder in that case).
 
+## Catalog: every cloudfact in your account, by project
+
+The Cloudflare account is the source of truth. cloudfact tags each Worker it creates (`cloudfact`, plus
+the project, the visibility and the kind), so one listing rebuilds the whole picture from any machine,
+even after a reinstall.
+
+```
+cloudfact deploy ./painel --project migracao        # file it under a project
+cloudfact catalog                                   # everything in the account, grouped by project
+cloudfact catalog --project migracao --json         # one project, machine readable
+cloudfact project painel financeiro                 # move it, no redeploy
+cloudfact catalog --publish                         # the catalog itself as a browsable page
+```
+
+Each entry says what the deploy is and who can open it: **Public**, **Private link** (key-gated) or
+**Sign-in** (Cloudflare Access), and **Static** (files served by Cloudflare) or **Server app** (an app
+with its own server behind the proxy). Quick tunnels have no account-side resource, so they show up only
+while the machine that started them still has the record, flagged `local tunnel`. `--publish` deploys the
+catalog as a page with a card per deploy, a live preview of the public ones, search, a list view and a
+filter per project. It is private by default like any other deploy; add `--access you@example.com` to put
+sign-in in front of it. MCP tools: `catalog`, `project`.
+
 ## MCP
 
 Stdio server. Tools: `deploy`, `expose`, `list`, `status`, `rotate`, `stop`, `remove`, `logs`, `doctor` — see [docs/tools.md](docs/tools.md) (generated from the code). Prompt: `cloudfact`. Sign-in is deliberately outside the MCP: run `cloudfact login` in a terminal so the token never enters the agent context.

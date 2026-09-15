@@ -6,6 +6,7 @@ import { deployDir, readState, summarize, writeState } from '../../services/stat
 import { credentials, runWrangler } from '../../services/wrangler.js';
 import { WORKER_SOURCE, wranglerConfig } from './gate-worker.js';
 import { accessContext, accessVars, deleteAccessApp, upsertAccessApp, workersSubdomain } from '../../services/access.js';
+import { tagWorker } from '../../services/catalog.js';
 import type { DeployMode, DeployResult } from '../../types.js';
 
 export interface WorkersTarget {
@@ -18,6 +19,8 @@ export interface WorkersTarget {
   keyExpiresAt?: string | null;
   /** Emails allowed through Cloudflare Access; when set, identity replaces the key gate. */
   access?: string[] | null;
+  /** Project this deploy belongs to in the account catalog. */
+  project?: string | null;
 }
 
 /** Copies `src` into `dst` skipping dotfiles, node_modules and symlinks. Returns the file count. */
@@ -139,6 +142,16 @@ export async function deployWorkers(t: WorkersTarget): Promise<DeployResult> {
       throw new Error(`wrangler deploy failed:\n${again.text.slice(-1500)}`);
     }
   }
+  // the account catalog is rebuilt from script tags, and a deploy resets them
+  try {
+    await tagWorker(t.name, {
+      project: t.project ?? null,
+      visibility: accessCtx ? 'access' : t.private ? 'private' : 'public',
+      kind: t.mode === 'proxy' ? 'app' : 'static',
+    });
+  } catch {
+    /* best effort: a deploy must not fail because tagging did */
+  }
   const versionId = r.text.match(/Version ID:\s*([0-9a-f-]+)/)?.[1] ?? null;
   const state = {
     ...readState(t.name)!,
@@ -148,6 +161,7 @@ export async function deployWorkers(t: WorkersTarget): Promise<DeployResult> {
     keyExpiresAt: t.private && !accessCtx ? (t.keyExpiresAt ?? null) : null,
     privateUrl: t.private && !accessCtx && url ? `${url}/#key=${t.key}` : null,
     access,
+    project: t.project ?? null,
     versionId,
     deployedAt: new Date().toISOString(),
     error: null,

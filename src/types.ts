@@ -2,6 +2,10 @@ export type Backend = 'tunnel' | 'workers';
 export type BackendChoice = Backend | 'auto' | 'pages';
 /** dir/file = static site; proxy = app behind a reverse proxy (`expose`). */
 export type DeployMode = 'dir' | 'file' | 'proxy';
+/** Who can open a deploy: anyone, whoever holds the key link, or the emails allowed by Cloudflare Access. */
+export type Visibility = 'public' | 'private' | 'access';
+/** Static files uploaded/served, or an app with its own server behind the proxy. */
+export type DeployKind = 'static' | 'app';
 export type DeployStatus = 'starting' | 'running' | 'reconnecting' | 'stopped' | 'dead' | 'error' | 'deploying' | 'deployed';
 
 export interface DeployState {
@@ -35,6 +39,8 @@ export interface DeployState {
   sshPid?: number | null;
   // workers
   files?: number;
+  /** Project this deploy belongs to in the account catalog. */
+  project?: string | null;
   /** Cloudflare Access app in front of this deploy (identity sign-in). */
   access?: { appId: string; aud: string; domain: string; emails: string[]; teamDomain: string } | null;
   versionId?: string | null;
@@ -61,6 +67,8 @@ export interface ExposeOptions {
   /** Key lifetime, e.g. "30m", "24h", "7d". Default: no expiry. */
   expires?: string;
   ssh?: SshTarget | null;
+  /** Project to file this deploy under in the account catalog. */
+  project?: string;
   restart?: boolean;
   timeoutMs?: number;
 }
@@ -76,6 +84,8 @@ export interface DeployOptions {
   expires?: string;
   /** Emails allowed to sign in through Cloudflare Access (workers backend). Replaces the key gate. */
   access?: string[];
+  /** Project to file this deploy under in the account catalog. */
+  project?: string;
   backend?: BackendChoice;
   restart?: boolean;
   timeoutMs?: number;
@@ -83,6 +93,32 @@ export interface DeployOptions {
 
 export interface DeployResult extends DeploySummary {
   reused: boolean;
+}
+
+/** One deploy as seen from the Cloudflare account (plus what this machine knows about it). */
+export interface CatalogEntry {
+  name: string;
+  project: string | null;
+  url: string | null;
+  /** True when the deploy exists in the Cloudflare account (workers). Quick tunnels are local-only. */
+  inAccount: boolean;
+  /** True when this machine still has the deploy's local record. */
+  local: boolean;
+  access: { emails: string[]; appId: string } | null;
+  visibility: Visibility;
+  kind: DeployKind;
+  hasAssets: boolean;
+  createdAt: string | null;
+  modifiedAt: string | null;
+  backend: Backend;
+  status: DeployStatus;
+}
+
+export interface CatalogResult {
+  accountId: string;
+  accountName: string | null;
+  subdomain: string | null;
+  projects: { project: string | null; deploys: CatalogEntry[] }[];
 }
 
 export interface Credentials {

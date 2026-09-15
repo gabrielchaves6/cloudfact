@@ -275,6 +275,7 @@ async function deployTunnel(t) {
     ssh: t.ssh ?? null,
     key: t.private ? newKey() : null,
     keyExpiresAt: t.private ? t.keyExpiresAt ?? null : null,
+    project: t.project ?? null,
     status: "starting",
     url: null,
     privateUrl: null,
@@ -348,6 +349,13 @@ var init_tunnel = __esm({
 // src/services/wrangler.ts
 import fs5 from "fs";
 import { spawnSync as spawnSync2 } from "child_process";
+function oauthToken() {
+  try {
+    return /oauth_token\s*=\s*"([^"]+)"/.exec(fs5.readFileSync(WRANGLER_CONFIG, "utf8"))?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
 function credentials(cfg = readConfig()) {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID ?? cfg.cloudflareAccountId ?? null;
   const token = process.env.CLOUDFLARE_API_TOKEN ?? cfg.cloudflareApiToken;
@@ -664,6 +672,164 @@ var init_access = __esm({
   }
 });
 
+// src/services/catalog.ts
+function projectTag(project) {
+  return PROJECT_TAG + slugProject(project);
+}
+function slugProject(input) {
+  return input.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "default";
+}
+function tagsFor(opts = {}) {
+  const tags = [TAG];
+  if (opts.project) tags.push(projectTag(opts.project));
+  if (opts.visibility) tags.push(VIS_TAG + opts.visibility);
+  if (opts.kind) tags.push(KIND_TAG + opts.kind);
+  return tags;
+}
+function projectFromTags(tags) {
+  const t = (tags ?? []).find((x) => x.startsWith(PROJECT_TAG));
+  return t ? t.slice(PROJECT_TAG.length) || null : null;
+}
+function bearer(cfg = readConfig()) {
+  const creds = credentials(cfg);
+  if (creds?.token) return { token: creds.token, accountId: creds.accountId };
+  const oauth = oauthToken();
+  if (oauth) return { token: oauth, accountId: creds?.accountId ?? cfg.cloudflareAccountId ?? null };
+  return null;
+}
+async function api(token, method, path8, body, fetchImpl = fetch) {
+  const res = await fetchImpl(API2 + path8, {
+    method,
+    headers: { Authorization: `Bearer ${token}`, ...body === void 0 ? {} : { "Content-Type": "application/json" } },
+    body: body === void 0 ? void 0 : JSON.stringify(body)
+  });
+  let env;
+  try {
+    env = await res.json();
+  } catch {
+  }
+  if (!res.ok || env?.success === false) {
+    const msg = env?.errors?.map((e) => `${e.code}: ${e.message}`).join("; ") || `HTTP ${res.status}`;
+    throw new Error(`Cloudflare API ${method} ${path8} failed \u2014 ${msg}`);
+  }
+  return env.result;
+}
+async function tagWorker(name, opts = {}, fetchImpl) {
+  const b = bearer();
+  if (!b?.accountId) return;
+  await api(b.token, "PUT", `/accounts/${b.accountId}/workers/scripts/${encodeURIComponent(name)}/tags`, tagsFor(opts), fetchImpl);
+}
+function visibilityOf(s) {
+  if (s.access) return "access";
+  return s.key ? "private" : "public";
+}
+function kindOf(s) {
+  return s.mode === "proxy" ? "app" : "static";
+}
+async function catalog(opts = {}) {
+  const cfg = readConfig();
+  const b = bearer(cfg);
+  if (!b) throw new Error("not signed in to Cloudflare: run `cloudfact login --device` or `cloudfact login --token <token>`");
+  if (!b.accountId) throw new Error("Cloudflare account id unknown; run `cloudfact login` again (it discovers the account)");
+  const f = opts.fetchImpl;
+  const scripts = await api(b.token, "GET", `/accounts/${b.accountId}/workers/scripts`, void 0, f);
+  let subdomain = null;
+  try {
+    subdomain = (await api(b.token, "GET", `/accounts/${b.accountId}/workers/subdomain`, void 0, f)).subdomain ?? null;
+  } catch {
+  }
+  let apps = [];
+  try {
+    apps = await api(b.token, "GET", `/accounts/${b.accountId}/access/apps?per_page=100`, void 0, f);
+  } catch {
+  }
+  const local = new Map(listDeploys().map((s) => [s.name, s]));
+  const accountNames = new Set(scripts.map((s) => s.id));
+  const entries = [];
+  for (const s of scripts) {
+    if (!(s.tags ?? []).includes(TAG)) continue;
+    const url = subdomain ? `https://${s.id}.${subdomain}.workers.dev` : null;
+    const state = local.get(s.id);
+    const app = url ? apps.find((a) => a.domain === new URL(url).host) : void 0;
+    const visibility = tagValue(s.tags, VIS_TAG) ?? (state ? visibilityOf(state) : app ? "access" : "public");
+    entries.push({
+      name: s.id,
+      project: projectFromTags(s.tags) ?? state?.project ?? null,
+      url,
+      inAccount: true,
+      local: Boolean(state),
+      access: app ? { emails: state?.access?.emails ?? [], appId: app.id } : null,
+      visibility,
+      kind: tagValue(s.tags, KIND_TAG) ?? (state ? kindOf(state) : s.has_assets ? "static" : "app"),
+      hasAssets: Boolean(s.has_assets),
+      createdAt: s.created_on ?? null,
+      modifiedAt: s.modified_on ?? null,
+      backend: state?.backend ?? "workers",
+      status: state?.status ?? "deployed"
+    });
+  }
+  for (const s of local.values()) {
+    if (entries.some((e) => e.name === s.name)) continue;
+    if (s.backend !== "tunnel") continue;
+    entries.push({
+      name: s.name,
+      project: s.project ?? null,
+      url: s.url ?? null,
+      inAccount: accountNames.has(s.name),
+      local: true,
+      access: s.access ? { emails: s.access.emails, appId: s.access.appId } : null,
+      visibility: visibilityOf(s),
+      kind: kindOf(s),
+      hasAssets: s.mode !== "proxy",
+      createdAt: s.startedAt ?? null,
+      modifiedAt: s.urlAt ?? s.startedAt ?? null,
+      backend: "tunnel",
+      status: s.status
+    });
+  }
+  const wanted = opts.project ? slugProject(opts.project) : null;
+  const kept = wanted ? entries.filter((e) => (e.project ?? "") === wanted) : entries;
+  kept.sort((a, b2) => (b2.modifiedAt ?? "").localeCompare(a.modifiedAt ?? "") || a.name.localeCompare(b2.name));
+  const names = [...new Set(kept.map((e) => e.project ?? ""))].sort();
+  return {
+    accountId: b.accountId,
+    accountName: cfg.cloudflareAccountName ?? null,
+    subdomain,
+    projects: names.map((p) => ({ project: p || null, deploys: kept.filter((e) => (e.project ?? "") === p) }))
+  };
+}
+async function setProject(name, project, fetchImpl) {
+  const b = bearer();
+  if (!b?.accountId) throw new Error("not signed in to Cloudflare: run `cloudfact login --token <token>`");
+  const current = (await catalog({ fetchImpl })).projects.flatMap((p) => p.deploys).find((d) => d.name === name);
+  if (!current) throw new Error(`deploy "${name}" is not in the account catalog`);
+  await api(
+    b.token,
+    "PUT",
+    `/accounts/${b.accountId}/workers/scripts/${encodeURIComponent(name)}/tags`,
+    tagsFor({ project, visibility: current.visibility, kind: current.kind }),
+    fetchImpl
+  );
+  const found = (await catalog({ fetchImpl })).projects.flatMap((p) => p.deploys).find((d) => d.name === name);
+  if (!found) throw new Error(`deploy "${name}" is not in the account catalog`);
+  return found;
+}
+var API2, TAG, PROJECT_TAG, VIS_TAG, KIND_TAG, tagValue;
+var init_catalog = __esm({
+  "src/services/catalog.ts"() {
+    "use strict";
+    init_config();
+    init_wrangler();
+    init_state();
+    API2 = "https://api.cloudflare.com/client/v4";
+    TAG = "cloudfact";
+    PROJECT_TAG = "cloudfact:project:";
+    VIS_TAG = "cloudfact:vis:";
+    KIND_TAG = "cloudfact:kind:";
+    tagValue = (tags, prefix) => (tags ?? []).find((t) => t.startsWith(prefix))?.slice(prefix.length) || null;
+  }
+});
+
 // src/backends/workers/index.ts
 import fs6 from "fs";
 import path5 from "path";
@@ -781,6 +947,14 @@ ${r.text.slice(-1500)}`);
 ${again.text.slice(-1500)}`);
     }
   }
+  try {
+    await tagWorker(t.name, {
+      project: t.project ?? null,
+      visibility: accessCtx ? "access" : t.private ? "private" : "public",
+      kind: t.mode === "proxy" ? "app" : "static"
+    });
+  } catch {
+  }
   const versionId = r.text.match(/Version ID:\s*([0-9a-f-]+)/)?.[1] ?? null;
   const state = {
     ...readState(t.name),
@@ -790,6 +964,7 @@ ${again.text.slice(-1500)}`);
     keyExpiresAt: t.private && !accessCtx ? t.keyExpiresAt ?? null : null,
     privateUrl: t.private && !accessCtx && url ? `${url}/#key=${t.key}` : null,
     access,
+    project: t.project ?? null,
     versionId,
     deployedAt: (/* @__PURE__ */ new Date()).toISOString(),
     error: null
@@ -841,6 +1016,7 @@ var init_workers = __esm({
     init_wrangler();
     init_gate_worker();
     init_access();
+    init_catalog();
   }
 });
 
@@ -863,12 +1039,167 @@ var init_duration = __esm({
   }
 });
 
+// src/services/gallery.ts
+function galleryHtml(c, opts = {}) {
+  const title = opts.title ?? "Cloudfacts";
+  const projects = c.projects.map((p) => p.project).filter((p) => Boolean(p));
+  const total = c.projects.reduce((n, p) => n + p.deploys.length, 0);
+  const card = (d) => {
+    const where = d.url ? esc(d.url) : "";
+    const preview = d.url && d.visibility === "public" && d.kind === "static" ? `<iframe src="${where}" loading="lazy" tabindex="-1" sandbox="allow-scripts" title=""></iframe>` : `<div class="fallback">${d.visibility === "access" ? "sign-in required" : d.visibility === "private" ? "private link" : "no preview"}</div>`;
+    const badge = d.inAccount ? "" : '<span class="tag">local tunnel</span>';
+    const search = [d.name, d.project ?? "", d.url ?? "", VIS_LABEL[d.visibility], KIND_LABEL[d.kind]].join(" ").toLowerCase();
+    return `<a class="card" href="${where || "#"}" target="_blank" rel="noopener"
+  data-project="${esc(d.project ?? "")}" data-vis="${esc(d.visibility)}" data-kind="${esc(d.kind)}" data-search="${esc(search)}">
+  <div class="shot">${preview}</div>
+  <div class="meta">
+    <p class="title">${esc(d.name)}</p>
+    <div class="sub">
+      <span class="pill vis-${esc(d.visibility)}">${ICON[d.visibility]}${VIS_LABEL[d.visibility]}</span>
+      <span class="pill">${ICON[d.kind]}${KIND_LABEL[d.kind]}</span>
+      ${badge}
+    </div>
+    <div class="sub when"><span data-at="${esc(d.modifiedAt ?? "")}"></span></div>
+  </div>
+</a>`;
+  };
+  const sections = c.projects.map(
+    (p) => `<section>
+  <h2>${esc(p.project ?? "No project")}</h2>
+  <div class="grid">${p.deploys.map(card).join("\n")}</div>
+</section>`
+  ).join("\n");
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>${esc(title)}</title>
+<style>${STYLE}</style>
+</head><body>
+<header>
+  <h1>${esc(title)}</h1>
+  <div class="tools">
+    <input id="q" type="search" placeholder="Search" aria-label="Search deploys">
+    <button class="icon" id="view" aria-pressed="false" title="Toggle list view" aria-label="Toggle list view">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+  </div>
+</header>
+<nav>
+  <button data-project="*" aria-pressed="true">All (${total})</button>
+  ${projects.map((p) => `<button data-project="${esc(p)}" aria-pressed="false">${esc(p)}</button>`).join("\n  ")}
+</nav>
+<main>
+${sections || '<p class="empty">Nothing published yet.</p>'}
+<p class="empty" id="empty" hidden>No deploy matches.</p>
+</main>
+<footer>${esc(c.accountName ?? c.accountId)}${c.subdomain ? ` \xB7 ${esc(c.subdomain)}.workers.dev` : ""} \xB7 generated by cloudfact</footer>
+<script>${SCRIPT}</script>
+</body></html>`;
+}
+var STYLE, ICON, VIS_LABEL, KIND_LABEL, SCRIPT, esc;
+var init_gallery = __esm({
+  "src/services/gallery.ts"() {
+    "use strict";
+    STYLE = `
+*{box-sizing:border-box}
+body{margin:0;background:#0d0d0d;color:#ededed;font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;align-items:center;gap:16px;padding:20px 28px;position:sticky;top:0;background:#0d0d0dee;backdrop-filter:blur(8px);z-index:5}
+h1{font-size:21px;font-weight:600;margin:0;flex:1;letter-spacing:-.01em}
+.tools{display:flex;align-items:center;gap:8px}
+input[type=search]{background:#1b1b1b;border:1px solid #2e2e2e;color:#ededed;border-radius:8px;padding:8px 12px;width:240px;font:inherit;font-size:14px}
+input[type=search]:focus{outline:none;border-color:#4a4a4a}
+button.icon{background:none;border:1px solid transparent;color:#a1a1a1;border-radius:8px;padding:7px;cursor:pointer;line-height:0}
+button.icon:hover,button.icon[aria-pressed=true]{background:#1b1b1b;color:#ededed;border-color:#2e2e2e}
+nav{display:flex;flex-wrap:wrap;gap:8px;padding:0 28px 16px}
+nav button{background:#161616;border:1px solid #2a2a2a;color:#b4b4b4;border-radius:999px;padding:5px 13px;font:inherit;font-size:13px;cursor:pointer}
+nav button[aria-pressed=true]{background:#ededed;color:#111;border-color:#ededed}
+main{padding:4px 28px 56px}
+h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:#8a8a8a;margin:28px 0 14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:22px}
+.card{background:#141414;border:1px solid #262626;border-radius:12px;overflow:hidden;text-decoration:none;color:inherit;display:flex;flex-direction:column;transition:border-color .15s,transform .15s}
+.card:hover{border-color:#3d3d3d;transform:translateY(-2px)}
+.shot{height:172px;background:#0a0a0a;border-bottom:1px solid #1f1f1f;position:relative;overflow:hidden}
+.shot iframe{width:1280px;height:820px;border:0;transform:scale(.216);transform-origin:top left;pointer-events:none;background:#fff}
+.shot .fallback{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#5a5a5a;font-size:13px;padding:16px;text-align:center}
+.meta{padding:13px 15px 15px}
+.title{font-weight:600;font-size:15px;margin:0 0 5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sub{display:flex;align-items:center;gap:7px;color:#8a8a8a;font-size:12.5px;flex-wrap:wrap}
+.sub.when{margin-top:7px}
+.pill{display:inline-flex;align-items:center;gap:5px;background:#1c1c1c;border:1px solid #2a2a2a;border-radius:6px;padding:2px 8px;font-size:11.5px;color:#b0b0b0}
+.pill.vis-access{color:#d8c48a;border-color:#3a3325}
+.pill.vis-private{color:#9fc0e8;border-color:#243243}
+.pill.vis-public{color:#93cba4;border-color:#23392b}
+.sub svg{flex:none}
+.tag{margin-left:auto;background:#1f1f1f;border-radius:5px;padding:2px 7px;font-size:11px;color:#a8a8a8}
+.empty{color:#7a7a7a;padding:40px 0}
+body.list .grid{display:flex;flex-direction:column;gap:9px}
+body.list .shot{display:none}
+body.list .card{flex-direction:row;align-items:center;padding:11px 15px}
+body.list .meta{padding:0;display:flex;align-items:center;gap:14px;width:100%}
+body.list .title{margin:0;min-width:220px}
+footer{color:#5f5f5f;font-size:12px;padding:0 28px 32px}
+`;
+    ICON = {
+      access: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></svg>',
+      private: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="4" y="10.5" width="16" height="11" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>',
+      public: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg>',
+      static: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>',
+      app: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>'
+    };
+    VIS_LABEL = { public: "Public", private: "Private link", access: "Sign-in" };
+    KIND_LABEL = { static: "Static", app: "Server app" };
+    SCRIPT = `
+const rel = (iso) => {
+  if (!iso) return 'never published';
+  const d = (Date.now() - Date.parse(iso)) / 1000;
+  if (d < 90) return 'Edited just now';
+  if (d < 3600) return 'Edited ' + Math.round(d / 60) + 'm ago';
+  if (d < 86400) return 'Edited ' + Math.round(d / 3600) + 'h ago';
+  if (d < 86400 * 7) return 'Edited ' + Math.round(d / 86400) + 'd ago';
+  return 'Edited ' + new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+};
+for (const el of document.querySelectorAll('[data-at]')) el.textContent = rel(el.dataset.at);
+const search = document.getElementById('q');
+const apply = () => {
+  const q = search.value.trim().toLowerCase();
+  const project = document.querySelector('nav button[aria-pressed=true]').dataset.project;
+  for (const section of document.querySelectorAll('section')) {
+    let shown = 0;
+    for (const card of section.querySelectorAll('.card')) {
+      const okQ = !q || card.dataset.search.includes(q);
+      const okP = project === '*' || card.dataset.project === project;
+      card.hidden = !(okQ && okP);
+      if (!card.hidden) shown++;
+    }
+    section.hidden = shown === 0;
+  }
+  document.getElementById('empty').hidden = document.querySelectorAll('.card:not([hidden])').length > 0;
+};
+search.addEventListener('input', apply);
+for (const b of document.querySelectorAll('nav button'))
+  b.addEventListener('click', () => {
+    for (const o of document.querySelectorAll('nav button')) o.setAttribute('aria-pressed', String(o === b));
+    apply();
+  });
+const view = document.getElementById('view');
+view.addEventListener('click', () => {
+  const list = document.body.classList.toggle('list');
+  view.setAttribute('aria-pressed', String(list));
+  try { localStorage.setItem('cloudfact-view', list ? 'list' : 'grid'); } catch {}
+});
+try { if (localStorage.getItem('cloudfact-view') === 'list') view.click(); } catch {}
+`;
+    esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+});
+
 // src/services/auth.ts
 import path6 from "path";
 import readline from "readline/promises";
 import { spawn as spawn2 } from "child_process";
-async function api(pathname, token) {
-  const res = await fetch(API2 + pathname, { headers: { Authorization: `Bearer ${token}` } });
+async function api2(pathname, token) {
+  const res = await fetch(API3 + pathname, { headers: { Authorization: `Bearer ${token}` } });
   let body;
   try {
     body = await res.json();
@@ -902,14 +1233,14 @@ async function loginWithToken(opts) {
   }
   let verify;
   try {
-    verify = await api("/user/tokens/verify", token);
+    verify = await api2("/user/tokens/verify", token);
   } catch (e) {
     throw new Error(`invalid token: ${e.message}`, { cause: e });
   }
   if (verify.status !== "active") throw new Error(`token status is "${verify.status}"`);
   let accounts = [];
   try {
-    accounts = await api("/accounts?per_page=50", token);
+    accounts = await api2("/accounts?per_page=50", token);
   } catch (e) {
     say(`warning: could not list accounts (${e.message})`);
   }
@@ -982,13 +1313,13 @@ function logout() {
     note: cloudflareAuth === "wrangler" ? "wrangler's OAuth credential is still in ~/.config/.wrangler; `npx wrangler logout` revokes it" : void 0
   };
 }
-var API2;
+var API3;
 var init_auth = __esm({
   "src/services/auth.ts"() {
     "use strict";
     init_config();
     init_wrangler();
-    API2 = "https://api.cloudflare.com/client/v4";
+    API3 = "https://api.cloudflare.com/client/v4";
   }
 });
 
@@ -1030,12 +1361,14 @@ async function deploy(opts = {}) {
       ...common,
       key: priv ? newKey() : null,
       keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
-      access: opts.access ?? null
+      access: opts.access ?? null,
+      project: opts.project ?? null
     });
   }
   return deployTunnel({
     ...common,
     keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
+    project: opts.project ?? null,
     restart: Boolean(opts.restart),
     timeoutMs: opts.timeoutMs ?? 45e3
   });
@@ -1054,8 +1387,23 @@ async function expose(opts) {
     ssh,
     private: priv,
     keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
+    project: opts.project ?? null,
     restart: Boolean(opts.restart),
     timeoutMs: opts.timeoutMs ?? 45e3
+  });
+}
+async function publishCatalog(opts = {}) {
+  const c = await catalog();
+  const dir = path7.join(HOME, "catalog");
+  fs7.mkdirSync(dir, { recursive: true, mode: 448 });
+  fs7.writeFileSync(path7.join(dir, "index.html"), galleryHtml(c, { title: opts.title }));
+  return deploy({
+    path: dir,
+    name: opts.name ?? "cloudfacts",
+    project: opts.project ?? "cloudfact",
+    access: opts.access,
+    public: opts.public,
+    backend: "workers"
   });
 }
 async function rotate(name, opts = {}) {
@@ -1134,11 +1482,14 @@ var init_cloudfact = __esm({
     init_tunnel();
     init_workers();
     init_duration();
+    init_catalog();
+    init_gallery();
     init_workers();
     init_cloudflared();
     init_state();
     init_wrangler();
     init_state();
+    init_catalog();
     init_auth();
     init_cloudflared();
     init_config();
@@ -1232,7 +1583,7 @@ __export(util_exports, {
   clone: () => clone,
   createTransparentProxy: () => createTransparentProxy,
   defineLazy: () => defineLazy,
-  esc: () => esc,
+  esc: () => esc2,
   escapeRegex: () => escapeRegex,
   extend: () => extend,
   finalizeIssue: () => finalizeIssue,
@@ -1371,7 +1722,7 @@ function randomString(length = 10) {
   }
   return str;
 }
-function esc(str) {
+function esc2(str) {
   return JSON.stringify(str);
 }
 function isObject(data) {
@@ -3090,7 +3441,7 @@ var init_schemas = __esm({
         const doc = new Doc(["shape", "payload", "ctx"]);
         const normalized = _normalized.value;
         const parseStr = (key) => {
-          const k = esc(key);
+          const k = esc2(key);
           return `shape[${k}]._zod.run({ value: input[${k}], issues: [] }, ctx)`;
         };
         doc.write(`const input = payload.value;`);
@@ -3104,7 +3455,7 @@ var init_schemas = __esm({
           if (normalized.optionalKeys.has(key)) {
             const id = ids[key];
             doc.write(`const ${id} = ${parseStr(key)};`);
-            const k = esc(key);
+            const k = esc2(key);
             doc.write(`
         if (${id}.issues.length) {
           if (input[${k}] === undefined) {
@@ -3131,9 +3482,9 @@ var init_schemas = __esm({
             doc.write(`
           if (${id}.issues.length) payload.issues = payload.issues.concat(${id}.issues.map(iss => ({
             ...iss,
-            path: iss.path ? [${esc(key)}, ...iss.path] : [${esc(key)}]
+            path: iss.path ? [${esc2(key)}, ...iss.path] : [${esc2(key)}]
           })));`);
-            doc.write(`newResult[${esc(key)}] = ${id}.value`);
+            doc.write(`newResult[${esc2(key)}] = ${id}.value`);
           }
         }
         doc.write(`payload.value = newResult;`);
@@ -21118,9 +21469,9 @@ var require_discriminator = __commonJS({
         function validateMapping() {
           const mapping = getMapping();
           gen.if(false);
-          for (const tagValue in mapping) {
-            gen.elseIf((0, codegen_1._)`${tag} === ${tagValue}`);
-            gen.assign(valid, applyTagSchema(mapping[tagValue]));
+          for (const tagValue2 in mapping) {
+            gen.elseIf((0, codegen_1._)`${tag} === ${tagValue2}`);
+            gen.assign(valid, applyTagSchema(mapping[tagValue2]));
           }
           gen.else();
           cxt.error(false, { discrError: types_1.DiscrError.Mapping, tag, tagName });
@@ -21164,18 +21515,18 @@ var require_discriminator = __commonJS({
             if (sch.const) {
               addMapping(sch.const, i);
             } else if (sch.enum) {
-              for (const tagValue of sch.enum) {
-                addMapping(tagValue, i);
+              for (const tagValue2 of sch.enum) {
+                addMapping(tagValue2, i);
               }
             } else {
               throw new Error(`discriminator: "properties/${tagName}" must have "const" or "enum"`);
             }
           }
-          function addMapping(tagValue, i) {
-            if (typeof tagValue != "string" || tagValue in oneOfMapping) {
+          function addMapping(tagValue2, i) {
+            if (typeof tagValue2 != "string" || tagValue2 in oneOfMapping) {
               throw new Error(`discriminator: "${tagName}" values must be unique strings`);
             }
-            oneOfMapping[tagValue] = i;
+            oneOfMapping[tagValue2] = i;
           }
         }
       }
@@ -23512,6 +23863,38 @@ var init_manage = __esm({
   }
 });
 
+// src/mcp/tools/catalog.ts
+var catalogTool, projectTool;
+var init_catalog2 = __esm({
+  "src/mcp/tools/catalog.ts"() {
+    "use strict";
+    init_zod();
+    init_cloudfact();
+    init_define_tool();
+    catalogTool = defineTool({
+      name: "catalog",
+      description: "Every cloudfact in the user's Cloudflare account, grouped by project, as the account itself sees them (so deploys made from another machine show up too). Each entry says whether it is public, a private key link or behind Cloudflare Access sign-in, and whether it serves static files or an app with its own server. Quick tunnels have no account-side resource and appear only when this machine still has their record (inAccount=false). publish=true turns the catalog into a browsable page and returns its URL.",
+      annotations: { title: "Account catalog", readOnlyHint: false },
+      schema: {
+        project: external_exports.string().optional().describe("Only deploys filed under this project"),
+        publish: external_exports.boolean().optional().describe("Publish the catalog as a page and return its URL"),
+        access: external_exports.array(external_exports.string()).optional().describe("With publish: emails allowed to sign in to the catalog page")
+      },
+      handler: ({ project, publish, access }) => publish ? publishCatalog({ project, access }) : catalog({ project })
+    });
+    projectTool = defineTool({
+      name: "project",
+      description: "File a deploy under a project in the account catalog (or pass project=null to clear it). Takes effect without redeploying.",
+      annotations: { title: "Set project", readOnlyHint: false, idempotentHint: true },
+      schema: {
+        name: external_exports.string().describe("Deploy name"),
+        project: external_exports.string().nullable().describe("Project name, or null to clear")
+      },
+      handler: ({ name, project }) => setProject(name, project)
+    });
+  }
+});
+
 // src/mcp/tools/index.ts
 var tools;
 var init_tools = __esm({
@@ -23520,10 +23903,13 @@ var init_tools = __esm({
     init_deploy();
     init_expose();
     init_manage();
+    init_catalog2();
     tools = [
       deployTool,
       exposeTool,
       listTool,
+      catalogTool,
+      projectTool,
       statusTool,
       rotateTool,
       stopTool,
@@ -23599,10 +23985,14 @@ import { parseArgs } from "util";
 var HELP = `cloudfact ${VERSION} \u2014 publish static pages from this machine to Cloudflare
 
 usage:
-  cloudfact deploy [path] [--name n] [--public] [--expires 24h] [--access a@x.com,b@y.com] [--backend auto|tunnel|workers] [--restart] [--json]
+  cloudfact deploy [path] [--name n] [--public] [--expires 24h] [--access a@x.com,b@y.com] [--project p] [--backend auto|tunnel|workers] [--restart] [--json]
   cloudfact expose <port> [--name n] [--public] [--expires 24h] [--ssh user@host] [--ssh-port 22] [--identity key] [--strict-host-key] [--restart] [--json]
   cloudfact rotate <name> [--expires 24h]
   cloudfact list [--json]
+  cloudfact catalog [--project p] [--publish] [--access a@x.com] [--json]
+                                                 (every cloudfact in the Cloudflare account, grouped by project;
+                                                  --publish turns the catalog itself into a page)
+  cloudfact project <name> <project|->            (file a deploy under a project; "-" clears it)
   cloudfact status <name> [--json]
   cloudfact stop <name> | --all
   cloudfact rm <name>
@@ -23640,7 +24030,9 @@ async function main(argv) {
       public: { type: "boolean", default: false },
       expires: { type: "string" },
       "strict-host-key": { type: "boolean", default: false },
-      access: { type: "string" }
+      access: { type: "string" },
+      project: { type: "string" },
+      publish: { type: "boolean" }
     }
   });
   const [cmd, ...rest] = positionals;
@@ -23664,6 +24056,7 @@ ${HELP}`);
         private: values.private,
         expires: values.expires,
         access: values.access ? values.access.split(",") : void 0,
+        project: values.project,
         backend: values.backend,
         restart: values.restart
       });
@@ -23698,6 +24091,47 @@ ${HELP}`);
         );
         console.log(`URL: ${r.privateUrl ?? r.url}`);
       }
+      return 0;
+    }
+    case "catalog": {
+      if (values.publish) {
+        const r = await publishCatalog({
+          name: values.name,
+          project: values.project,
+          access: values.access ? values.access.split(",") : void 0,
+          public: values.public
+        });
+        if (values.json) print(r);
+        else {
+          console.log(`catalog published: ${r.privateUrl ?? r.url}`);
+          if (r.access) console.log(`access: sign-in required (${r.access.emails.join(", ")}) via ${r.access.teamDomain}`);
+        }
+        return 0;
+      }
+      const c = await catalog({ project: values.project });
+      if (values.json) print(c);
+      else {
+        const total = c.projects.reduce((n, p) => n + p.deploys.length, 0);
+        if (!total) console.log("no cloudfact deploys in this Cloudflare account yet");
+        console.log(`account: ${c.accountName ?? c.accountId}${c.subdomain ? ` (${c.subdomain}.workers.dev)` : ""}`);
+        for (const group of c.projects) {
+          console.log(`
+${group.project ?? "(no project)"}`);
+          for (const d of group.deploys) {
+            const where = d.inAccount ? d.local ? "" : " [not on this machine]" : " [local tunnel]";
+            const who = d.access ? ` sign-in: ${d.access.emails.join(", ") || "Cloudflare Access"}` : "";
+            console.log(`  ${d.name.padEnd(24)} ${(d.url ?? "-").padEnd(46)}${where}${who}`);
+          }
+        }
+      }
+      return 0;
+    }
+    case "project": {
+      const name = need(rest[0], "the deploy name");
+      const project = need(rest[1], 'the project name (or "-" to clear)');
+      const entry = await setProject(name, project === "-" ? null : project);
+      if (values.json) print(entry);
+      else console.log(`${entry.name} \u2192 ${entry.project ?? "(no project)"}`);
       return 0;
     }
     case "list":

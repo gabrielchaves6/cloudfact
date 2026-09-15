@@ -22,6 +22,8 @@ export interface TunnelTarget {
   private: boolean;
   /** ISO expiry for the private key (null = never) */
   keyExpiresAt?: string | null;
+  /** Project this deploy belongs to in the account catalog. */
+  project?: string | null;
   restart: boolean;
   timeoutMs: number;
 }
@@ -60,6 +62,7 @@ export async function deployTunnel(t: TunnelTarget): Promise<DeployResult> {
     ssh: t.ssh ?? null,
     key: t.private ? newKey() : null,
     keyExpiresAt: t.private ? (t.keyExpiresAt ?? null) : null,
+    project: t.project ?? null,
     status: 'starting',
     url: null,
     privateUrl: null,

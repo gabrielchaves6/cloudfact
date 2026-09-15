@@ -124,7 +124,7 @@ describe('Cloudflare Access', () => {
     const { deploy } = await import('../src/cloudfact.js');
     await deploy({ path: site, name: 'team-site', backend: 'workers', access: ['carol@example.com'] });
     expect(api.state.apps).toHaveLength(1);
-    expect(api.calls.filter((c) => c.method === 'PUT')).toHaveLength(1);
+    expect(api.calls.filter((c) => c.method === 'PUT' && c.path.includes('/access/apps/'))).toHaveLength(1);
   });
 
   it('remove deletes the worker and the access app', async () => {
