@@ -4,8 +4,13 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- A page discovered on this machine that answers 401 or 403 is no longer listed as public: it is shown as `App login`, because the app behind it wants its own credentials, which cloudfact cannot supply. Its stored login, if any, is one click away on the card, and each value copies on click.
+
 ### Added
 
+- A tab icon on both generated pages: the mark on a dark tile, shipped beside the catalog and inlined in the private gate.
 - The CloudFacts identity on the pages cloudfact generates: CloudFacts Sans (400/500, SIL Open Font License, shipped in `brand/`), the mark and the off-white-on-dark palette. The catalog page is published with the font beside it and the private gate embeds the mark, so neither depends on the network. Pages you publish are untouched.
 
 ## [0.8.0] - 2026-09-15

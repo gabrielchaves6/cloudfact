@@ -17,6 +17,8 @@ export interface LocalTunnel {
   title: string | null;
   /** True when the page is a cloudfact private gate (the link alone is not enough to get in). */
   gated: boolean;
+  /** True when the app answers the tunnel with its own challenge (HTTP 401/403). */
+  challenges: boolean;
 }
 
 async function quickTunnelHostname(port: number): Promise<string | null> {
@@ -32,15 +34,17 @@ async function quickTunnelHostname(port: number): Promise<string | null> {
 
 const titleOf = (html: string): string | null => /<title[^>]*>([^<]{1,80})/i.exec(html)?.[1]?.trim() || null;
 
-async function describe(url: string): Promise<{ title: string | null; gated: boolean }> {
+async function describe(url: string): Promise<{ title: string | null; gated: boolean; challenges: boolean }> {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(PAGE_TIMEOUT), redirect: 'follow' });
+    // a page that answers 401/403 is not open to anyone: the app behind it wants its own credentials
+    const challenges = res.status === 401 || res.status === 403;
     const html = await res.text();
     // cloudfact's own gate page announces itself; anything else is served as-is
     const gated = html.includes('Private page: open it through the full link');
-    return { title: gated ? null : titleOf(html), gated };
+    return { title: gated || challenges ? null : titleOf(html), gated, challenges };
   } catch {
-    return { title: null, gated: false };
+    return { title: null, gated: false, challenges: false };
   }
 }
 
@@ -52,8 +56,8 @@ export async function discoverTunnels(): Promise<LocalTunnel[]> {
   return Promise.all(
     unique.map(async (hostname) => {
       const url = `https://${hostname}`;
-      const { title, gated } = await describe(url);
-      return { hostname, url, title, gated };
+      const { title, gated, challenges } = await describe(url);
+      return { hostname, url, title, gated, challenges };
     }),
   );
 }

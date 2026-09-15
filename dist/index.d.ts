@@ -5,8 +5,11 @@ type Backend = 'tunnel' | 'workers';
 type BackendChoice = Backend | 'auto' | 'pages';
 /** dir/file = static site; proxy = app behind a reverse proxy (`expose`). */
 type DeployMode = 'dir' | 'file' | 'proxy';
-/** Who can open a deploy: anyone, whoever holds the key link, or the emails allowed by Cloudflare Access. */
-type Visibility = 'public' | 'private' | 'access';
+/**
+ * Who can open a deploy: anyone, whoever holds the key link, the emails allowed by Cloudflare Access, or
+ * — for something published outside cloudfact — whoever knows the app's own username and password.
+ */
+type Visibility = 'public' | 'private' | 'access' | 'app-login';
 /** Static files uploaded/served, or an app with its own server behind the proxy. */
 type DeployKind = 'static' | 'app';
 type DeployStatus = 'starting' | 'running' | 'reconnecting' | 'stopped' | 'dead' | 'error' | 'deploying' | 'deployed';

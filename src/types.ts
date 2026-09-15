@@ -2,8 +2,11 @@ export type Backend = 'tunnel' | 'workers';
 export type BackendChoice = Backend | 'auto' | 'pages';
 /** dir/file = static site; proxy = app behind a reverse proxy (`expose`). */
 export type DeployMode = 'dir' | 'file' | 'proxy';
-/** Who can open a deploy: anyone, whoever holds the key link, or the emails allowed by Cloudflare Access. */
-export type Visibility = 'public' | 'private' | 'access';
+/**
+ * Who can open a deploy: anyone, whoever holds the key link, the emails allowed by Cloudflare Access, or
+ * — for something published outside cloudfact — whoever knows the app's own username and password.
+ */
+export type Visibility = 'public' | 'private' | 'access' | 'app-login';
 /** Static files uploaded/served, or an app with its own server behind the proxy. */
 export type DeployKind = 'static' | 'app';
 export type DeployStatus = 'starting' | 'running' | 'reconnecting' | 'stopped' | 'dead' | 'error' | 'deploying' | 'deployed';

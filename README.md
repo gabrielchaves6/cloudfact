@@ -107,8 +107,10 @@ cloudfact project painel financeiro                 # move it, no redeploy
 cloudfact catalog --publish                         # publish the page; later deploys refresh it
 ```
 
-Each entry says what the deploy is and who can open it: **Public**, **Private link** (key-gated) or
-**Sign-in** (Cloudflare Access), and **Static** (files served by Cloudflare) or **Server app** (an app
+Each entry says what the deploy is and who can open it: **Public**, **Private link** (key-gated),
+**Sign-in** (Cloudflare Access) or **App login** (the app behind it asks for its own username and
+password, which cloudfact cannot supply: record it with `cloudfact creds` and the card keeps it), and
+**Static** (files served by Cloudflare) or **Server app** (an app
 with its own server behind the proxy). Quick tunnels have no account-side resource, so they are found on the
 machine itself: cloudfact asks the running `cloudflared` processes for their public hostname, which also
 surfaces pages still serving from here that this machine has no record of (flagged `no local record`:

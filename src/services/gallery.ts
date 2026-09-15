@@ -45,6 +45,8 @@ h2{font-size:12.5px;font-weight:500;text-transform:uppercase;letter-spacing:.07e
 .pill.vis-access{color:#d8c48a;border-color:#3a3325}
 .pill.vis-private{color:#9fc0e8;border-color:#243243}
 .pill.vis-public{color:#93cba4;border-color:#23392b}
+.pill.vis-app-login{color:#d2a5a5;border-color:#3a2828}
+.hintline{color:#6f6f6f;font-size:11.5px;margin-top:8px}
 .sub svg{flex:none}
 .tag{background:#1f1f1f;border:1px solid #2a2a2a;border-radius:6px;padding:2px 8px;font-size:11.5px;color:#9a9a9a}
 .card a{color:inherit;text-decoration:none}
@@ -56,6 +58,8 @@ h2{font-size:12.5px;font-weight:500;text-transform:uppercase;letter-spacing:.07e
 .creds div{display:flex;gap:8px;align-items:center;font-size:12px}
 .creds span{color:#7d7d7d;min-width:38px}
 .creds code{background:#1c1c1c;border:1px solid #2c2c2c;border-radius:5px;padding:2px 7px;color:#d8d8d8;user-select:all}
+.creds code[data-copy]{cursor:copy}
+.creds code[data-copy]:hover{border-color:#3d3d3d;color:var(--ink)}
 .empty{color:#7a7a7a;padding:40px 0}
 body.list .grid{display:flex;flex-direction:column;gap:9px}
 body.list .shot{display:none}
@@ -75,8 +79,10 @@ const ICON = {
   static:
     '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>',
   app: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>',
+  'app-login':
+    '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="8" cy="12" r="4"/><path d="M12 12h9M18 12v4M15 12v3"/></svg>',
 };
-const VIS_LABEL = { public: 'Public', private: 'Private link', access: 'Sign-in' };
+const VIS_LABEL = { public: 'Public', private: 'Private link', access: 'Sign-in', 'app-login': 'App login' };
 const KIND_LABEL = { static: 'Static', app: 'Server app' };
 
 const SCRIPT = `
@@ -163,15 +169,21 @@ export function galleryHtml(c: CatalogResult, opts: { title?: string; snapshots?
     const preview = snap
       ? `<iframe srcdoc="${esc(snap)}" loading="lazy" tabindex="-1" sandbox="" title=""></iframe>`
       : `<div class="fallback"><div class="mono">${esc(d.name.slice(0, 2))}</div><div class="why">${
-          d.visibility === 'access' ? 'sign-in required' : d.visibility === 'private' ? 'private link' : 'no preview'
+          d.visibility === 'access'
+            ? 'sign-in required'
+            : d.visibility === 'private'
+              ? 'private link'
+              : d.visibility === 'app-login'
+                ? 'this app asks for its own login'
+                : 'no preview'
         }</div></div>`;
     const badge = d.untracked ? '<span class="tag">no local record</span>' : d.inAccount ? '' : '<span class="tag">local tunnel</span>';
     const search = [d.name, d.project ?? '', d.url ?? '', VIS_LABEL[d.visibility], KIND_LABEL[d.kind]].join(' ').toLowerCase();
     const open = d.openUrl ?? d.url ?? '';
     const creds = d.creds
       ? `<div class="creds" hidden>${[
-          d.creds.user ? `<div><span>user</span><code>${esc(d.creds.user)}</code></div>` : '',
-          d.creds.password ? `<div><span>pass</span><code>${esc(d.creds.password)}</code></div>` : '',
+          d.creds.user ? `<div><span>user</span><code data-copy="${esc(d.creds.user)}">${esc(d.creds.user)}</code></div>` : '',
+          d.creds.password ? `<div><span>pass</span><code data-copy="${esc(d.creds.password)}">${esc(d.creds.password)}</code></div>` : '',
           d.creds.note ? `<div><span>note</span><code>${esc(d.creds.note)}</code></div>` : '',
         ].join('')}</div>`
       : '';
@@ -193,6 +205,7 @@ export function galleryHtml(c: CatalogResult, opts: { title?: string; snapshots?
     <div class="sub when"><span data-at="${esc(d.modifiedAt ?? '')}">${d.modifiedAt ? '' : esc(d.status === 'running' ? 'Live now' : 'No date')}</span></div>
     ${actions}
     ${creds}
+    ${d.visibility === 'app-login' && !d.creds ? '<p class="hintline">Its own login. Record it with <code>cloudfact creds</code> to keep it here.</p>' : ''}
   </div>
 </div>`;
   };
@@ -210,6 +223,7 @@ export function galleryHtml(c: CatalogResult, opts: { title?: string; snapshots?
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
+<link rel="icon" href="./favicon.png" sizes="any">
 <title>${esc(title)}</title>
 <style>${STYLE}</style>
 </head><body>

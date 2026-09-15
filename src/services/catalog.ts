@@ -227,7 +227,7 @@ export async function catalog(opts: { project?: string; fetchImpl?: typeof fetch
         inAccount: false,
         local: true,
         access: null,
-        visibility: t.gated ? 'private' : 'public',
+        visibility: t.gated ? 'private' : t.challenges ? 'app-login' : 'public',
         kind: 'app',
         hasAssets: false,
         createdAt: null,
