@@ -6,31 +6,39 @@
 import type { CatalogResult } from '../types.js';
 
 const STYLE = `
+@font-face{font-family:'CloudFacts Sans';src:url('./CloudFactsSans-Regular.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:'CloudFacts Sans';src:url('./CloudFactsSans-Medium.woff2') format('woff2');font-weight:500;font-style:normal;font-display:swap}
+/* CloudFacts Sans ships weights 400 and 500 only: anything heavier is faked by the browser */
+:root{--ink:#f4f4f1;--muted:#8e8e89;--surface:#141414;--line:#262626;--bg:#0d0d0d}
 *{box-sizing:border-box}
-body{margin:0;background:#0d0d0d;color:#ededed;font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-header{display:flex;align-items:center;gap:16px;padding:20px 28px;position:sticky;top:0;background:#0d0d0dee;backdrop-filter:blur(8px);z-index:5}
-h1{font-size:21px;font-weight:600;margin:0;flex:1;letter-spacing:-.01em}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 'CloudFacts Sans',ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;align-items:center;gap:14px;padding:18px 28px 14px;position:sticky;top:0;background:#0d0d0dee;backdrop-filter:blur(8px);z-index:5}
+h1{font-size:20px;font-weight:500;margin:0;letter-spacing:-.005em;display:flex;align-items:baseline;gap:10px}
+.brand{display:flex;align-items:center;gap:11px;flex:1;min-width:0}
+.brand img{width:26px;height:26px;display:block}
+.slogan{font-size:12.5px;color:var(--muted);white-space:nowrap}
+@media (max-width:620px){.slogan{display:none}}
 .tools{display:flex;align-items:center;gap:8px}
-input[type=search]{background:#1b1b1b;border:1px solid #2e2e2e;color:#ededed;border-radius:8px;padding:8px 12px;width:240px;font:inherit;font-size:14px}
+input[type=search]{background:#1b1b1b;border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:8px 12px;width:240px;font:inherit;font-size:14px}
 input[type=search]:focus{outline:none;border-color:#4a4a4a}
 button.icon{background:none;border:1px solid transparent;color:#a1a1a1;border-radius:8px;padding:7px;cursor:pointer;line-height:0}
-button.icon:hover,button.icon[aria-pressed=true]{background:#1b1b1b;color:#ededed;border-color:#2e2e2e}
+button.icon:hover,button.icon[aria-pressed=true]{background:#1b1b1b;color:var(--ink);border-color:var(--line)}
 nav{display:flex;flex-wrap:wrap;gap:8px;padding:0 28px 16px}
 nav button{background:#161616;border:1px solid #2a2a2a;color:#b4b4b4;border-radius:999px;padding:5px 13px;font:inherit;font-size:13px;cursor:pointer}
-nav button[aria-pressed=true]{background:#ededed;color:#111;border-color:#ededed}
+nav button[aria-pressed=true]{background:var(--ink);color:#111;border-color:var(--ink)}
 main{padding:4px 28px 56px}
-h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:#8a8a8a;margin:28px 0 14px}
+h2{font-size:12.5px;font-weight:500;text-transform:uppercase;letter-spacing:.07em;color:#8a8a8a;margin:28px 0 14px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:22px}
-.card{background:#141414;border:1px solid #262626;border-radius:12px;overflow:hidden;text-decoration:none;color:inherit;display:flex;flex-direction:column;transition:border-color .15s,transform .15s}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden;text-decoration:none;color:inherit;display:flex;flex-direction:column;transition:border-color .15s,transform .15s}
 .card:hover{border-color:#3d3d3d;transform:translateY(-2px)}
 .shot{height:176px;background:#0a0a0a;border-bottom:1px solid #1f1f1f;position:relative;overflow:hidden}
 /* rendered at desktop width and shrunk to the card: --s is refined per card on load and on resize */
 .shot iframe{width:1280px;height:900px;border:0;transform:scale(var(--s,.24));transform-origin:top left;pointer-events:none;background:#fff}
 .shot .fallback{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:radial-gradient(120% 100% at 50% 0%,#1d1d1d 0%,#121212 70%);color:#6d6d6d}
-.shot .mono{width:52px;height:52px;border-radius:13px;background:#232323;border:1px solid #303030;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:600;color:#c9c9c9;text-transform:uppercase}
+.shot .mono{width:52px;height:52px;border-radius:13px;background:#232323;border:1px solid #303030;display:flex;align-items:center;justify-content:center;font-size:21px;font-weight:500;color:#c9c9c9;text-transform:uppercase}
 .shot .why{font-size:12px;letter-spacing:.02em}
 .meta{padding:13px 15px 15px}
-.title{font-weight:600;font-size:15px;margin:0 0 5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.title{font-weight:500;font-size:15px;margin:0 0 5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sub{display:flex;align-items:center;gap:7px;color:#8a8a8a;font-size:12.5px;flex-wrap:wrap}
 .sub.when{margin-top:7px}
 .pill{display:inline-flex;align-items:center;gap:5px;background:#1c1c1c;border:1px solid #2a2a2a;border-radius:6px;padding:2px 8px;font-size:11.5px;color:#b0b0b0}
@@ -42,7 +50,7 @@ h2{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;
 .card a{color:inherit;text-decoration:none}
 .actions{display:flex;gap:7px;margin-top:10px}
 .mini{background:#1c1c1c;border:1px solid #2c2c2c;color:#b4b4b4;border-radius:6px;padding:3px 9px;font:inherit;font-size:11.5px;cursor:pointer}
-.mini:hover{background:#242424;color:#ededed}
+.mini:hover{background:#242424;color:var(--ink)}
 .creds{margin-top:9px;display:grid;gap:4px}
 .creds[hidden]{display:none}
 .creds div{display:flex;gap:8px;align-items:center;font-size:12px}
@@ -142,7 +150,7 @@ const esc = (s: string): string =>
 
 /** Self-contained page: no build step, no network beyond the previews themselves. */
 export function galleryHtml(c: CatalogResult, opts: { title?: string; snapshots?: Record<string, string> } = {}): string {
-  const title = opts.title ?? 'Cloudfacts';
+  const title = opts.title ?? 'CloudFacts';
   const projects = c.projects.map((p) => p.project).filter((p): p is string => Boolean(p));
   const total = c.projects.reduce((n, p) => n + p.deploys.length, 0);
 
@@ -206,7 +214,10 @@ export function galleryHtml(c: CatalogResult, opts: { title?: string; snapshots?
 <style>${STYLE}</style>
 </head><body>
 <header>
-  <h1>${esc(title)}</h1>
+  <div class="brand">
+    <img src="./symbol.png" alt="" width="26" height="26">
+    <h1>${esc(title)}<span class="slogan">Your stuff, flexible, everywhere.</span></h1>
+  </div>
   <div class="tools">
     <input id="q" type="search" placeholder="Search" aria-label="Search deploys">
     <button class="icon" id="view" aria-pressed="false" title="Toggle list view" aria-label="Toggle list view">

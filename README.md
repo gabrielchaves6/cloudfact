@@ -128,6 +128,15 @@ a catalog page that is itself gated. A catalog published with `--public` carries
 Cloudflare Access sign-in by default, for the email that owns the account; pass `--access` to choose who
 else gets in, or `--public` to opt out. MCP tools: `catalog`, `project`.
 
+## Look
+
+The pages cloudfact generates carry the CloudFacts identity: the mark, CloudFacts Sans and an off-white
+`#F4F4F1` on a dark surface. The catalog page is published with the font files beside it and the private
+gate carries the mark inline, so neither fetches anything from the network when someone opens it. The
+font ships in weights 400 and 500 only, which is why nothing asks for a bolder one: the browser would
+fake it. Assets and their licence live in [brand/](brand/README.md). Your own pages are never restyled;
+cloudfact only dresses the pages it makes.
+
 ## MCP
 
 Stdio server. Tools: `deploy`, `expose`, `list`, `status`, `rotate`, `stop`, `remove`, `logs`, `doctor` — see [docs/tools.md](docs/tools.md) (generated from the code). Prompt: `cloudfact`. Sign-in is deliberately outside the MCP: run `cloudfact login` in a terminal so the token never enters the agent context.

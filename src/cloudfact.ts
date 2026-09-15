@@ -1,7 +1,7 @@
 /** cloudfact public API: what the MCP server and the CLI expose. */
 import fs from 'node:fs';
 import path from 'node:path';
-import { BIN_SCRIPT, HOME, VERSION, readConfig, writeConfig } from './config.js';
+import { BIN_SCRIPT, BRAND_DIR, HOME, VERSION, readConfig, writeConfig } from './config.js';
 import { deployTunnel, newKey, stopTunnel } from './backends/tunnel/index.js';
 import { rotateWorkersKey } from './backends/workers/index.js';
 import { expiryFrom } from './services/duration.js';
@@ -206,6 +206,9 @@ export async function publishCatalog(
   );
   const dir = path.join(HOME, 'catalog');
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // the page carries its own typography and mark: nothing is fetched from anywhere else at view time
+  for (const file of fs.existsSync(BRAND_DIR) ? fs.readdirSync(BRAND_DIR) : [])
+    fs.copyFileSync(path.join(BRAND_DIR, file), path.join(dir, file));
   fs.writeFileSync(path.join(dir, 'index.html'), galleryHtml(c, { title: opts.title, snapshots: shots }));
   const name = opts.name ?? readConfig().catalogDeploy ?? 'cloudfacts';
   const result = await deploy({

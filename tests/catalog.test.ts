@@ -117,7 +117,7 @@ describe('account catalog', () => {
     const { catalog } = await import('../src/cloudfact.js');
     const { galleryHtml } = await import('../src/services/gallery.js');
     const html = galleryHtml(await catalog());
-    expect(html).toContain('Cloudfacts');
+    expect(html).toContain('CloudFacts');
     expect(html).toContain('painel');
     expect(html).toContain('Sign-in');
     expect(html).toContain('Server app');

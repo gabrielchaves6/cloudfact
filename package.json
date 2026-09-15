@@ -7,7 +7,7 @@
     "cloudfact": "dist/bin.js"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/copy-brand.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . && prettier --check .",
     "format": "eslint --fix . && prettier --write .",
@@ -48,7 +48,8 @@
     "install.sh",
     "README.md",
     "LICENSE",
-    "docs"
+    "docs",
+    "brand"
   ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

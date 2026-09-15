@@ -18,6 +18,9 @@ export const WRANGLER_CONFIG = path.join(
 );
 /** Tunnel host process script. Sits next to the bundle in dist/; in dev point at it with CLOUDFACT_HOST_SCRIPT. */
 export const HOST_SCRIPT = process.env.CLOUDFACT_HOST_SCRIPT ?? path.join(here, 'host.js');
+/** Brand assets (font, mark) copied next to the bundle at build time; see brand/README.md. */
+export const BRAND_DIR = process.env.CLOUDFACT_BRAND_DIR ?? path.join(here, 'brand');
+
 /** The CLI bundle, spawned detached to refresh the catalog page after a deploy. */
 export const BIN_SCRIPT = process.env.CLOUDFACT_BIN_SCRIPT ?? path.join(here, 'bin.js');
 export const TOKEN_URL = 'https://dash.cloudflare.com/profile/api-tokens';
