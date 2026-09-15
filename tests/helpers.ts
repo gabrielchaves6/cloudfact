@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-/** Cria um diretório temporário e devolve o caminho; o chamador remove. */
+/** Creates a temporary directory and returns its path; the caller removes it. */
 export function tmpDir(prefix = 'cloudfact-test-'): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }

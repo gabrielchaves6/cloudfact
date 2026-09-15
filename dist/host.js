@@ -104,7 +104,7 @@ function writeState(name2, state) {
 }
 function patchState(name2, patch) {
   const current = readState(name2);
-  if (!current) throw new Error(`deploy "${name2}" n\xE3o existe`);
+  if (!current) throw new Error(`deploy "${name2}" does not exist`);
   const next = { ...current, ...patch };
   writeState(name2, next);
   return next;
@@ -153,13 +153,13 @@ var BASE_HEADERS = {
   "Referrer-Policy": "no-referrer",
   "Cache-Control": "no-cache"
 };
-var GATE_HTML = `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>cloudfact</title>
-<style>body{font:16px system-ui;margin:3rem;color:#333}</style><body><p id="m">Autenticando\u2026</p>
+var GATE_HTML = `<!doctype html><html lang="en"><meta charset="utf-8"><title>cloudfact</title>
+<style>body{font:16px system-ui;margin:3rem;color:#333}</style><body><p id="m">Signing in\u2026</p>
 <script>(async()=>{const el=document.getElementById('m');const m=location.hash.match(/key=([^&]+)/);
-if(!m){el.textContent='P\xE1gina privada: abra pelo link completo (com #key=\u2026).';return}
+if(!m){el.textContent='Private page: open it through the full link (with #key=\u2026).';return}
 const r=await fetch('/api/session',{method:'POST',headers:{Authorization:'Bearer '+decodeURIComponent(m[1])}});
 if(r.ok){history.replaceState(null,'',location.pathname+location.search);location.reload()}
-else el.textContent='Chave inv\xE1lida.'})()</script></body></html>`;
+else el.textContent='Invalid key.'})()</script></body></html>`;
 function send(res, code, body, headers = {}) {
   const buf = Buffer.isBuffer(body) ? body : Buffer.from(body);
   res.writeHead(code, { ...BASE_HEADERS, "Content-Length": buf.length, ...headers });
@@ -173,7 +173,7 @@ function listing(urlPath, absDir) {
     return `<li><a href="${escapeHtml(encodeURIComponent(e.name))}${suffix}">${escapeHtml(e.name + suffix)}</a></li>`;
   }).join("");
   const up = urlPath !== "/" ? '<li><a href="../">../</a></li>' : "";
-  return `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>${escapeHtml(urlPath)}</title>
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>${escapeHtml(urlPath)}</title>
 <style>body{font:15px system-ui;margin:2rem;color:#222}li{margin:.25rem 0}</style>
 <body><h1>${escapeHtml(urlPath)}</h1><ul>${up}${rows}</ul></body></html>`;
 }
@@ -271,12 +271,12 @@ function createStaticHandler(opts) {
 var TUNNEL_URL = /https:\/\/(?!api\.)[a-z0-9-]+\.trycloudflare\.com/;
 var name = process.argv[2];
 if (!name) {
-  log.ts("uso: host.js <nome>");
+  log.ts("usage: host.js <name>");
   process.exit(2);
 }
 var initial = readState(name);
 if (!initial) {
-  log.ts("sem state.json para", name);
+  log.ts("no state.json for", name);
   process.exit(2);
 }
 var dir = deployDir(name);
@@ -289,14 +289,14 @@ server.listen(0, "127.0.0.1", () => {
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : 0;
   patchState(name, { hostPid: process.pid, port, status: "starting", local: `http://127.0.0.1:${port}` });
-  log.ts("servidor local na porta", port);
+  log.ts("local server on port", port);
   startTunnel(port);
 });
 function startTunnel(port) {
   if (stopping) return;
   const bin = findCloudflared(readConfig());
   if (!bin) {
-    patchState(name, { status: "error", error: "cloudflared n\xE3o encontrado" });
+    patchState(name, { status: "error", error: "cloudflared not found" });
     return;
   }
   const logFd = fs5.openSync(path5.join(dir, "tunnel.log"), "a");
@@ -320,7 +320,7 @@ function startTunnel(port) {
       error: null,
       urlAt: (/* @__PURE__ */ new Date()).toISOString()
     });
-    log.ts("t\xFAnel pronto:", url);
+    log.ts("tunnel ready:", url);
   };
   tunnel.stdout?.on("data", scan);
   tunnel.stderr?.on("data", scan);
@@ -330,7 +330,7 @@ function startTunnel(port) {
     if (stopping) return;
     restarts += 1;
     const delay = Math.min(3e4, 2e3 * restarts);
-    log.ts(`cloudflared saiu (code=${code} sig=${signal}); religando em ${delay / 1e3}s`);
+    log.ts(`cloudflared exited (code=${code} sig=${signal}); restarting in ${delay / 1e3}s`);
     patchState(name, { status: "reconnecting", url: null, privateUrl: null, tunnelPid: null, restarts });
     setTimeout(() => startTunnel(port), delay);
   });
@@ -338,7 +338,7 @@ function startTunnel(port) {
 function shutdown() {
   if (stopping) return;
   stopping = true;
-  log.ts("encerrando");
+  log.ts("shutting down");
   patchState(name, { status: "stopped", url: null, privateUrl: null, hostPid: null, tunnelPid: null, stoppedAt: (/* @__PURE__ */ new Date()).toISOString() });
   tunnel?.kill("SIGTERM");
   server.close();
@@ -347,6 +347,6 @@ function shutdown() {
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 process.on("uncaughtException", (err) => {
-  log.ts("erro", err);
+  log.ts("error", err);
   patchState(name, { status: "error", error: String(err) });
 });

@@ -21471,7 +21471,7 @@ function textResult(value) {
   return { content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] };
 }
 function errorResult(err) {
-  return { isError: true, content: [{ type: "text", text: `erro: ${err.message ?? String(err)}` }] };
+  return { isError: true, content: [{ type: "text", text: `error: ${err.message ?? String(err)}` }] };
 }
 
 // src/cloudfact.ts
@@ -21531,11 +21531,11 @@ function cloudflaredVersion(bin) {
 }
 function releaseAsset() {
   const arch = { x64: "amd64", arm64: "arm64", arm: "arm" }[process.arch];
-  if (!arch) throw new Error(`arquitetura sem build do cloudflared: ${process.arch}`);
+  if (!arch) throw new Error(`no cloudflared build for architecture ${process.arch}`);
   if (process.platform === "linux") return { url: `${RELEASES}/cloudflared-linux-${arch}`, tgz: false };
   if (process.platform === "darwin") return { url: `${RELEASES}/cloudflared-darwin-${arch}.tgz`, tgz: true };
   throw new Error(
-    `instale o cloudflared manualmente para ${process.platform}: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/`
+    `install cloudflared manually for ${process.platform}: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/`
   );
 }
 async function installCloudflared(onProgress = () => {
@@ -21544,9 +21544,9 @@ async function installCloudflared(onProgress = () => {
   if (fs2.existsSync(dest)) return dest;
   const { url, tgz } = releaseAsset();
   fs2.mkdirSync(BIN_DIR, { recursive: true, mode: 448 });
-  onProgress(`baixando cloudflared: ${url}`);
+  onProgress(`downloading cloudflared: ${url}`);
   const res = await fetch(url, { redirect: "follow" });
-  if (!res.ok || !res.body) throw new Error(`download do cloudflared falhou: HTTP ${res.status}`);
+  if (!res.ok || !res.body) throw new Error(`cloudflared download failed: HTTP ${res.status}`);
   const tmp = `${dest}.part`;
   if (!tgz) {
     await pipeline(Readable.fromWeb(res.body), fs2.createWriteStream(tmp, { mode: 493 }));
@@ -21555,17 +21555,17 @@ async function installCloudflared(onProgress = () => {
     await pipeline(Readable.fromWeb(res.body), createGunzip(), fs2.createWriteStream(tar));
     const x = spawnSync("tar", ["-xf", tar, "-C", BIN_DIR, "cloudflared"], { encoding: "utf8" });
     fs2.rmSync(tar, { force: true });
-    if (x.status !== 0) throw new Error(`tar falhou: ${x.stderr}`);
+    if (x.status !== 0) throw new Error(`tar failed: ${x.stderr}`);
     fs2.renameSync(path2.join(BIN_DIR, "cloudflared"), tmp);
   }
   fs2.chmodSync(tmp, 493);
   const version2 = cloudflaredVersion(tmp);
   if (!version2) {
     fs2.rmSync(tmp, { force: true });
-    throw new Error("bin\xE1rio baixado n\xE3o roda");
+    throw new Error("downloaded binary does not run");
   }
   fs2.renameSync(tmp, dest);
-  onProgress(`cloudflared instalado em ${dest} (${version2})`);
+  onProgress(`cloudflared installed at ${dest} (${version2})`);
   return dest;
 }
 
@@ -21679,13 +21679,13 @@ async function waitForUrl(name, timeoutMs) {
     if (s?.status === "running" && s.url) return s;
     if (s?.status === "error" || s?.status === "dead") {
       throw new Error(
-        `deploy "${name}" falhou (${s.status}${s.error ? `: ${s.error}` : ""}). Logs:
+        `deploy "${name}" failed (${s.status}${s.error ? `: ${s.error}` : ""}). Logs:
 ${JSON.stringify(readLogs(name, 15), null, 2)}`
       );
     }
     await sleep(400);
   }
-  throw new Error(`tempo esgotado esperando a URL do t\xFAnel "${name}". Logs:
+  throw new Error(`timed out waiting for the tunnel URL of "${name}". Logs:
 ${JSON.stringify(readLogs(name, 15), null, 2)}`);
 }
 async function stopTunnel(name) {
@@ -21779,10 +21779,10 @@ async function deployWorkers(t) {
   const creds = credentials(cfg);
   if (!creds) {
     throw new Error(
-      'backend "workers" exige login na Cloudflare: `cloudfact login --device` (navegador) ou `cloudfact login --token <token>`. Ou use --backend tunnel.'
+      'the "workers" backend requires a Cloudflare sign-in: `cloudfact login --device` (browser) or `cloudfact login --token <token>`. Or use --backend tunnel.'
     );
   }
-  if (t.private) throw new Error("--private s\xF3 existe no backend tunnel por enquanto; no Workers a URL \xE9 p\xFAblica.");
+  if (t.private) throw new Error("--private is only available on the tunnel backend for now; Workers URLs are public.");
   const dir = deployDir(t.name);
   const site = path5.join(dir, "site");
   const cwd = path5.join(dir, "empty");
@@ -21795,7 +21795,7 @@ async function deployWorkers(t) {
     files = 1;
   } else {
     files = stageDir(t.root, site);
-    if (!files) throw new Error(`pasta sem arquivos public\xE1veis: ${t.root}`);
+    if (!files) throw new Error(`no publishable files in ${t.root}`);
   }
   const prev = readState(t.name);
   writeState(t.name, {
@@ -21817,7 +21817,7 @@ async function deployWorkers(t) {
   });
   if (r.status !== 0) {
     writeState(t.name, { ...readState(t.name), status: "error", error: r.text.slice(-1500) });
-    throw new Error(`wrangler deploy falhou:
+    throw new Error(`wrangler deploy failed:
 ${r.text.slice(-1500)}`);
   }
   const url = (r.text.match(/https:\/\/[a-z0-9.-]+\.workers\.dev/g) ?? []).find((u) => u.includes(`//${t.name}.`)) ?? null;
@@ -21828,7 +21828,7 @@ ${r.text.slice(-1500)}`);
 }
 function deleteWorker(name) {
   const r = runWrangler(["delete", "--name", name, "--force"], { cwd: path5.join(deployDir(name), "empty") });
-  return r.status === 0 ? "worker apagado" : `falha ao apagar worker: ${r.text.slice(-400)}`;
+  return r.status === 0 ? "worker deleted" : `failed to delete worker: ${r.text.slice(-400)}`;
 }
 
 // src/services/auth.ts
@@ -21843,7 +21843,7 @@ function resolveTarget(target) {
   try {
     stat = fs7.statSync(abs);
   } catch {
-    throw new Error(`caminho n\xE3o existe: ${abs}`);
+    throw new Error(`path does not exist: ${abs}`);
   }
   if (stat.isDirectory()) return { mode: "dir", root: abs, file: null, defaultName: path7.basename(abs) };
   return { mode: "file", root: null, file: abs, defaultName: path7.basename(abs, path7.extname(abs)) };
@@ -21853,7 +21853,7 @@ function resolveBackend(choice) {
   if (c === "pages") return "workers";
   if (c === "auto") return credentials() ? "workers" : "tunnel";
   if (c === "tunnel" || c === "workers") return c;
-  throw new Error(`backend desconhecido: ${String(c)}`);
+  throw new Error(`unknown backend: ${String(c)}`);
 }
 async function deploy(opts = {}) {
   const t = resolveTarget(opts.path);
@@ -21865,9 +21865,9 @@ async function deploy(opts = {}) {
 }
 async function stop(name) {
   const s = readState(name);
-  if (!s) throw new Error(`deploy "${name}" n\xE3o existe`);
+  if (!s) throw new Error(`deploy "${name}" does not exist`);
   if (s.backend === "workers")
-    return { name, stopped: false, note: "Workers n\xE3o tem processo local; `remove` apaga o worker na Cloudflare." };
+    return { name, stopped: false, note: "Workers deploys have no local process; `remove` deletes the worker on Cloudflare." };
   await stopTunnel(name);
   return { name, stopped: true };
 }
@@ -21878,7 +21878,7 @@ async function stopAll() {
 }
 async function remove(name) {
   const s = readState(name);
-  if (!s) throw new Error(`deploy "${name}" n\xE3o existe`);
+  if (!s) throw new Error(`deploy "${name}" does not exist`);
   let remote;
   if (s.backend === "tunnel") await stopTunnel(name);
   if (s.backend === "workers" && s.status === "deployed") remote = deleteWorker(name);
@@ -21887,7 +21887,7 @@ async function remove(name) {
 }
 async function status(name, opts = {}) {
   const s = effectiveState(name);
-  if (!s) throw new Error(`deploy "${name}" n\xE3o existe`);
+  if (!s) throw new Error(`deploy "${name}" does not exist`);
   const out = summarize(s);
   if ((opts.check ?? true) && s.url) {
     try {
@@ -21909,8 +21909,8 @@ async function doctor() {
     version: VERSION,
     node: process.version,
     home: HOME,
-    cloudflared: bin ? { path: bin, version: cloudflaredVersion(bin) } : { missing: true, hint: "ser\xE1 baixado automaticamente no primeiro deploy (ou rode `cloudfact setup`)" },
-    cloudflare: creds ? { loggedIn: true, source: creds.source, accountId: creds.accountId, accountName: cfg.cloudflareAccountName ?? null } : { loggedIn: false, hint: "rode `cloudfact login --device` (navegador) ou `cloudfact login --token <token>`" },
+    cloudflared: bin ? { path: bin, version: cloudflaredVersion(bin) } : { missing: true, hint: "downloaded automatically on the first deploy (or run `cloudfact setup`)" },
+    cloudflare: creds ? { loggedIn: true, source: creds.source, accountId: creds.accountId, accountName: cfg.cloudflareAccountName ?? null } : { loggedIn: false, hint: "run `cloudfact login --device` (browser) or `cloudfact login --token <token>`" },
     defaultBackend: creds ? "workers" : "tunnel",
     deploys: listDeploys().map((s) => ({ name: s.name, backend: s.backend, status: s.status, url: s.url ?? null }))
   };
@@ -21919,14 +21919,14 @@ async function doctor() {
 // src/mcp/tools/deploy.ts
 var deployTool = defineTool({
   name: "deploy",
-  description: 'Publica uma pasta (ou um \xFAnico .html) da m\xE1quina em uma URL p\xFAblica na Cloudflare. Backend "tunnel" (padr\xE3o sem login): servidor local + cloudflared quick tunnel, URL *.trycloudflare.com; o processo fica em background e sobrevive ao fim da sess\xE3o. Backend "workers" (padr\xE3o quando logado): Cloudflare Workers com assets est\xE1ticos, URL fixa https://<nome>.<sub>.workers.dev; republicar atualiza no mesmo endere\xE7o. No tunnel \xE9 idempotente: se o mesmo caminho j\xE1 est\xE1 no ar, devolve a URL existente (reused=true). Devolve JSON com url e, quando private=true, privateUrl (j\xE1 inclui #key=...).',
-  annotations: { title: "Publicar p\xE1gina est\xE1tica", readOnlyHint: false, idempotentHint: true },
+  description: 'Publish a folder (or a single .html file) from this machine to a public Cloudflare URL. "tunnel" backend (default when signed out): local static server + cloudflared quick tunnel, *.trycloudflare.com URL; the process runs in the background and outlives the session. "workers" backend (default when signed in): Cloudflare Workers with static assets, fixed URL https://<name>.<sub>.workers.dev; redeploying updates the same address. Idempotent on tunnel: if the same path is already live, returns the existing URL (reused=true). Returns JSON with url and, when private=true, privateUrl (already includes #key=...).',
+  annotations: { title: "Publish static site", readOnlyHint: false, idempotentHint: true },
   schema: {
-    path: external_exports.string().describe("Caminho absoluto da pasta ou do arquivo .html a publicar"),
-    name: external_exports.string().optional().describe("Nome do deploy (slug). Padr\xE3o: nome da pasta/arquivo"),
-    private: external_exports.boolean().optional().describe("Protege com chave: s\xF3 quem abrir o privateUrl (#key=...) v\xEA o conte\xFAdo. For\xE7a o backend tunnel"),
-    backend: external_exports.enum(["auto", "tunnel", "workers"]).optional().describe("auto = workers se logado na Cloudflare, sen\xE3o tunnel"),
-    restart: external_exports.boolean().optional().describe("For\xE7a reiniciar mesmo se j\xE1 estiver no ar (gera URL nova no tunnel)")
+    path: external_exports.string().describe("Absolute path of the folder or .html file to publish"),
+    name: external_exports.string().optional().describe("Deploy name (slug). Defaults to the folder/file name"),
+    private: external_exports.boolean().optional().describe("Key-protected: only whoever opens privateUrl (#key=...) sees the content. Forces the tunnel backend"),
+    backend: external_exports.enum(["auto", "tunnel", "workers"]).optional().describe("auto = workers when signed in to Cloudflare, otherwise tunnel"),
+    restart: external_exports.boolean().optional().describe("Restart even if already live (yields a new URL on tunnel)")
   },
   handler: (params) => deploy(params)
 });
@@ -21934,50 +21934,50 @@ var deployTool = defineTool({
 // src/mcp/tools/manage.ts
 var listTool = defineTool({
   name: "list",
-  description: "Lista todos os deploys do cloudfact com backend, status e URL.",
-  annotations: { title: "Listar deploys", readOnlyHint: true },
+  description: "List every cloudfact deploy with backend, status and URL.",
+  annotations: { title: "List deploys", readOnlyHint: true },
   schema: {},
   handler: async () => listDeploys().map(summarize)
 });
 var statusTool = defineTool({
   name: "status",
-  description: "Estado de um deploy, incluindo checagem HTTP da URL p\xFAblica (reachable/httpStatus).",
-  annotations: { title: "Status de um deploy", readOnlyHint: true },
-  schema: { name: external_exports.string().describe("Nome do deploy") },
+  description: "State of one deploy, including an HTTP check of its public URL (reachable/httpStatus).",
+  annotations: { title: "Deploy status", readOnlyHint: true },
+  schema: { name: external_exports.string().describe("Deploy name") },
   handler: ({ name }) => status(name)
 });
 var stopTool = defineTool({
   name: "stop",
-  description: "Encerra o servidor local e o t\xFAnel de um deploy (ou de todos com all=true). O registro fica para consulta. N\xE3o se aplica ao backend workers.",
-  annotations: { title: "Parar deploy", readOnlyHint: false, destructiveHint: false },
-  schema: { name: external_exports.string().optional().describe("Nome do deploy"), all: external_exports.boolean().optional().describe("Parar todos os t\xFAneis") },
+  description: "Stop the local server and tunnel of one deploy (or all of them with all=true). The record is kept for inspection. Not applicable to the workers backend.",
+  annotations: { title: "Stop deploy", readOnlyHint: false, destructiveHint: false },
+  schema: { name: external_exports.string().optional().describe("Deploy name"), all: external_exports.boolean().optional().describe("Stop every tunnel") },
   handler: ({ name, all }) => {
     if (all) return stopAll();
-    if (!name) throw new Error("informe name ou all=true");
+    if (!name) throw new Error("pass name or all=true");
     return stop(name);
   }
 });
 var removeTool = defineTool({
   name: "remove",
-  description: "Para (se estiver rodando) e apaga o registro e logs do deploy. No backend workers, apaga tamb\xE9m o worker na Cloudflare.",
-  annotations: { title: "Remover deploy", readOnlyHint: false, destructiveHint: true },
-  schema: { name: external_exports.string().describe("Nome do deploy") },
+  description: "Stop (if running) and delete the deploy record and logs. On the workers backend, also deletes the worker on Cloudflare.",
+  annotations: { title: "Remove deploy", readOnlyHint: false, destructiveHint: true },
+  schema: { name: external_exports.string().describe("Deploy name") },
   handler: ({ name }) => remove(name)
 });
 var logsTool = defineTool({
   name: "logs",
-  description: "\xDAltimas linhas dos logs do deploy: host (servidor local), cloudflared e wrangler.",
-  annotations: { title: "Logs de um deploy", readOnlyHint: true },
+  description: "Last lines of the deploy logs: host (local server), cloudflared and wrangler.",
+  annotations: { title: "Deploy logs", readOnlyHint: true },
   schema: {
-    name: external_exports.string().describe("Nome do deploy"),
-    lines: external_exports.number().int().min(1).max(500).optional().describe("Quantidade de linhas (padr\xE3o 40)")
+    name: external_exports.string().describe("Deploy name"),
+    lines: external_exports.number().int().min(1).max(500).optional().describe("Number of lines (default 40)")
   },
   handler: async ({ name, lines }) => readLogs(name, lines ?? 40)
 });
 var doctorTool = defineTool({
   name: "doctor",
-  description: "Diagn\xF3stico: cloudflared, login na Cloudflare, backend padr\xE3o e deploys ativos. Rode antes de deploy quando algo falhar.",
-  annotations: { title: "Diagn\xF3stico", readOnlyHint: true },
+  description: "Diagnostics: cloudflared, Cloudflare sign-in, default backend and active deploys. Run it before deploy when something fails.",
+  annotations: { title: "Diagnostics", readOnlyHint: true },
   schema: {},
   handler: () => doctor()
 });
@@ -22004,9 +22004,9 @@ function createServer() {
   server.registerPrompt(
     "cloudfact",
     {
-      title: "Publicar na Cloudflare",
-      description: "Publica um caminho da m\xE1quina e devolve a URL",
-      argsSchema: { path: external_exports.string().describe("pasta ou .html") }
+      title: "Publish to Cloudflare",
+      description: "Publish a path from this machine and return the URL",
+      argsSchema: { path: external_exports.string().describe("folder or .html file") }
     },
     ({ path: path8 }) => ({
       messages: [
@@ -22014,7 +22014,7 @@ function createServer() {
           role: "user",
           content: {
             type: "text",
-            text: `Publique ${path8} com a tool deploy do cloudfact e me devolva a URL p\xFAblica. Se falhar, rode doctor e logs e explique.`
+            text: `Publish ${path8} with the cloudfact deploy tool and give me the public URL. If it fails, run doctor and logs and explain.`
           }
         }
       ]

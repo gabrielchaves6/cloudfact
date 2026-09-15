@@ -1,4 +1,4 @@
-// Falha se a versão divergir entre package.json, server.json e os manifestos do plugin.
+// Fails when the version differs across package.json, server.json and the plugin manifests.
 import fs from 'node:fs';
 const read = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
 const pkg = read('package.json').version;
@@ -11,7 +11,7 @@ const found = {
 };
 const bad = Object.entries(found).filter(([, v]) => v !== pkg);
 if (bad.length) {
-  console.error(`versão esperada ${pkg}; divergentes:\n` + bad.map(([k, v]) => `  ${k}: ${v}`).join('\n'));
+  console.error(`expected version ${pkg}; mismatches:\n` + bad.map(([k, v]) => `  ${k}: ${v}`).join('\n'));
   process.exit(1);
 }
-console.log(`versões sincronizadas: ${pkg}`);
+console.log(`versions in sync: ${pkg}`);

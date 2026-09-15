@@ -1,4 +1,4 @@
-/** Backend "workers": Cloudflare Workers com assets estáticos (sucessor do Pages). URL fixa *.workers.dev */
+/** "workers" backend: Cloudflare Workers with static assets (the successor of Pages). Fixed *.workers.dev URL. */
 import fs from 'node:fs';
 import path from 'node:path';
 import { readConfig } from '../../config.js';
@@ -14,7 +14,7 @@ export interface WorkersTarget {
   private: boolean;
 }
 
-/** Copia `src` para `dst` ignorando dotfiles, node_modules e symlinks. Devolve o número de arquivos. */
+/** Copies `src` into `dst` skipping dotfiles, node_modules and symlinks. Returns the file count. */
 export function stageDir(src: string, dst: string): number {
   fs.rmSync(dst, { recursive: true, force: true });
   fs.mkdirSync(dst, { recursive: true });
@@ -42,14 +42,14 @@ export async function deployWorkers(t: WorkersTarget): Promise<DeployResult> {
   const creds = credentials(cfg);
   if (!creds) {
     throw new Error(
-      'backend "workers" exige login na Cloudflare: `cloudfact login --device` (navegador) ou `cloudfact login --token <token>`. Ou use --backend tunnel.',
+      'the "workers" backend requires a Cloudflare sign-in: `cloudfact login --device` (browser) or `cloudfact login --token <token>`. Or use --backend tunnel.',
     );
   }
-  if (t.private) throw new Error('--private só existe no backend tunnel por enquanto; no Workers a URL é pública.');
+  if (t.private) throw new Error('--private is only available on the tunnel backend for now; Workers URLs are public.');
 
   const dir = deployDir(t.name);
   const site = path.join(dir, 'site');
-  const cwd = path.join(dir, 'empty'); // cwd neutro: o wrangler não deve autodetectar projeto nenhum
+  const cwd = path.join(dir, 'empty'); // neutral cwd: wrangler must not auto-detect any project
   fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });
   let files: number;
   if (t.mode === 'file') {
@@ -59,7 +59,7 @@ export async function deployWorkers(t: WorkersTarget): Promise<DeployResult> {
     files = 1;
   } else {
     files = stageDir(t.root!, site);
-    if (!files) throw new Error(`pasta sem arquivos publicáveis: ${t.root}`);
+    if (!files) throw new Error(`no publishable files in ${t.root}`);
   }
 
   const prev = readState(t.name);
@@ -82,7 +82,7 @@ export async function deployWorkers(t: WorkersTarget): Promise<DeployResult> {
   });
   if (r.status !== 0) {
     writeState(t.name, { ...readState(t.name)!, status: 'error', error: r.text.slice(-1500) });
-    throw new Error(`wrangler deploy falhou:\n${r.text.slice(-1500)}`);
+    throw new Error(`wrangler deploy failed:\n${r.text.slice(-1500)}`);
   }
   const url = (r.text.match(/https:\/\/[a-z0-9.-]+\.workers\.dev/g) ?? []).find((u) => u.includes(`//${t.name}.`)) ?? null;
   const versionId = r.text.match(/Version ID:\s*([0-9a-f-]+)/)?.[1] ?? null;
@@ -91,8 +91,8 @@ export async function deployWorkers(t: WorkersTarget): Promise<DeployResult> {
   return { ...summarize(state), reused: false };
 }
 
-/** Apaga o worker na Cloudflare. Devolve uma frase de resultado. */
+/** Deletes the worker on Cloudflare. Returns a one-line outcome. */
 export function deleteWorker(name: string): string {
   const r = runWrangler(['delete', '--name', name, '--force'], { cwd: path.join(deployDir(name), 'empty') });
-  return r.status === 0 ? 'worker apagado' : `falha ao apagar worker: ${r.text.slice(-400)}`;
+  return r.status === 0 ? 'worker deleted' : `failed to delete worker: ${r.text.slice(-400)}`;
 }

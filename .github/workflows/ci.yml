@@ -19,6 +19,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
-      - name: dist/ e docs/ versionados precisam bater com o build
+      - name: committed dist/ and docs/ must match the build
         if: matrix.node == 22
-        run: git diff --exit-code --stat -- dist docs || (echo "rode npm run check e commite dist/ e docs/" && exit 1)
+        run: git diff --exit-code --stat -- dist docs || (echo "run npm run check and commit dist/ and docs/" && exit 1)

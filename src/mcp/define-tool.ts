@@ -16,7 +16,7 @@ export interface ToolDefinition<Schema extends ZodRawShape = ZodRawShape> {
   handler: (params: z.infer<z.ZodObject<Schema>>) => Promise<unknown>;
 }
 
-/** Identidade tipada: garante que `handler` recebe os params do `schema`. */
+/** Typed identity: guarantees `handler` receives the params described by `schema`. */
 export function defineTool<Schema extends ZodRawShape>(def: ToolDefinition<Schema>): ToolDefinition<Schema> {
   return def;
 }
@@ -26,5 +26,5 @@ export function textResult(value: unknown): CallToolResult {
 }
 
 export function errorResult(err: unknown): CallToolResult {
-  return { isError: true, content: [{ type: 'text', text: `erro: ${(err as Error).message ?? String(err)}` }] };
+  return { isError: true, content: [{ type: 'text', text: `error: ${(err as Error).message ?? String(err)}` }] };
 }

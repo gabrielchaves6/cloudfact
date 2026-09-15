@@ -66,12 +66,12 @@ async function waitForUrl(name: string, timeoutMs: number): Promise<DeployState>
     if (s?.status === 'running' && s.url) return s;
     if (s?.status === 'error' || s?.status === 'dead') {
       throw new Error(
-        `deploy "${name}" falhou (${s.status}${s.error ? `: ${s.error}` : ''}). Logs:\n${JSON.stringify(readLogs(name, 15), null, 2)}`,
+        `deploy "${name}" failed (${s.status}${s.error ? `: ${s.error}` : ''}). Logs:\n${JSON.stringify(readLogs(name, 15), null, 2)}`,
       );
     }
     await sleep(400);
   }
-  throw new Error(`tempo esgotado esperando a URL do túnel "${name}". Logs:\n${JSON.stringify(readLogs(name, 15), null, 2)}`);
+  throw new Error(`timed out waiting for the tunnel URL of "${name}". Logs:\n${JSON.stringify(readLogs(name, 15), null, 2)}`);
 }
 
 export async function stopTunnel(name: string): Promise<void> {

@@ -1,4 +1,4 @@
-// Gera docs/tools.md a partir das definições das tools (dist/index.js). Rode após `npm run build`.
+// Generates docs/tools.md from the tool definitions (dist/index.js). Run after `npm run build`.
 import fs from 'node:fs';
 import { tools } from '../dist/index.js';
 

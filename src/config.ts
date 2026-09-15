@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-/** Diretório de estado do cloudfact. Sobrescreva com CLOUDFACT_HOME (útil em testes). */
+/** cloudfact state directory. Override with CLOUDFACT_HOME (handy in tests). */
 export const HOME = process.env.CLOUDFACT_HOME ?? path.join(os.homedir(), '.cloudfact');
 export const DEPLOYS_DIR = path.join(HOME, 'deploys');
 export const BIN_DIR = path.join(HOME, 'bin');
@@ -16,7 +16,7 @@ export const WRANGLER_CONFIG = path.join(
   'config',
   'default.toml',
 );
-/** Script do processo host do túnel. Em dist/ fica ao lado; em dev aponte com CLOUDFACT_HOST_SCRIPT. */
+/** Tunnel host process script. Sits next to the bundle in dist/; in dev point at it with CLOUDFACT_HOST_SCRIPT. */
 export const HOST_SCRIPT = process.env.CLOUDFACT_HOST_SCRIPT ?? path.join(here, 'host.js');
 export const TOKEN_URL = 'https://dash.cloudflare.com/profile/api-tokens';
 
@@ -25,7 +25,7 @@ function readVersion(): string {
     try {
       return (JSON.parse(fs.readFileSync(candidate, 'utf8')) as { version: string }).version;
     } catch {
-      /* tenta o próximo */
+      /* try the next one */
     }
   }
   return '0.0.0';

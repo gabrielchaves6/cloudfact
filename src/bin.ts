@@ -6,7 +6,7 @@ main(process.argv.slice(2)).then(
     if (code) process.exitCode = code;
   },
   (err: Error) => {
-    console.error(`erro: ${err.message}`);
+    console.error(`error: ${err.message}`);
     process.exitCode = 1;
   },
 );

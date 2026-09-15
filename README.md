@@ -2,8 +2,6 @@
 
 Publish a folder or a single HTML file from your machine to a public Cloudflare URL with one command. Ships as a **CLI**, an **MCP server** (works with Claude Code, Codex, Cursor, Claude Desktop, Windsurf…) and a `/cloudfact` skill.
 
-[Leia em português](README.pt-BR.md)
-
 ```
 cloudfact deploy ./report.html                       # → https://xxxx.trycloudflare.com          (no account needed)
 cloudfact login --device && cloudfact deploy ./site  # → https://site.<your-sub>.workers.dev     (fixed URL, your account)

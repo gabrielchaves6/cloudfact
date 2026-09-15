@@ -1,7 +1,7 @@
 {
   "name": "cloudfact",
   "version": "0.3.0",
-  "description": "Publique um HTML ou uma pasta da máquina em uma URL pública na Cloudflare com /cloudfact (túnel rápido sem conta, ou Workers com URL fixa).",
+  "description": "Publish an HTML file or a folder from this machine to a public Cloudflare URL with /cloudfact (quick tunnel without an account, or Workers with a fixed URL).",
   "author": { "name": "Gabriel Chaves", "url": "https://github.com/gabrielchaves6" },
   "homepage": "https://github.com/gabrielchaves6/cloudfact",
   "repository": "https://github.com/gabrielchaves6/cloudfact",

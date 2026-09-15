@@ -29,7 +29,7 @@ export function readState(name: string): DeployState | null {
   }
 }
 
-/** Escrita atômica (tmp + rename) para o host e o CLI não se pisarem. */
+/** Atomic write (tmp + rename) so the host process and the CLI never clobber each other. */
 export function writeState(name: string, state: DeployState): void {
   const dir = deployDir(name);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -40,7 +40,7 @@ export function writeState(name: string, state: DeployState): void {
 
 export function patchState(name: string, patch: Partial<DeployState>): DeployState {
   const current = readState(name);
-  if (!current) throw new Error(`deploy "${name}" não existe`);
+  if (!current) throw new Error(`deploy "${name}" does not exist`);
   const next = { ...current, ...patch };
   writeState(name, next);
   return next;
@@ -56,7 +56,7 @@ export function alive(pid: number | null | undefined): boolean {
   }
 }
 
-/** Estado corrigido: se o host do túnel morreu sem avisar, reporta "dead". */
+/** Effective state: reports "dead" when the tunnel host died without updating the file. */
 export function effectiveState(name: string): DeployState | null {
   const s = readState(name);
   if (!s) return null;

@@ -13,7 +13,7 @@ export interface DeployState {
   startedAt: string;
   url?: string | null;
   privateUrl?: string | null;
-  /** Chave do modo privado. Nunca sai em respostas cruas; use summarize(). */
+  /** Private-mode key. Never returned raw; use summarize(). */
   key?: string | null;
   error?: string | null;
   // tunnel
@@ -30,7 +30,7 @@ export interface DeployState {
   deployedAt?: string;
 }
 
-/** Estado sem a chave privada (o privateUrl já a contém). */
+/** State without the private key (privateUrl already carries it). */
 export type DeploySummary = Omit<DeployState, 'key'>;
 
 export interface DeployOptions {

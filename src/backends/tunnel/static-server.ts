@@ -1,7 +1,7 @@
 /**
- * Servidor estático mínimo e seguro: só serve o que está dentro de `root` (ou um único arquivo
- * em modo `file`). Sem dotfiles, sem path traversal, sem seguir links para fora.
- * Modo privado: sem o cookie, toda rota devolve a página de gate, que troca `#key=` por cookie HttpOnly.
+ * Minimal, safe static server: serves only what lives inside `root` (or a single file in `file` mode).
+ * No dotfiles, no path traversal, never follows links outside the root.
+ * Private mode: without the cookie every route returns the gate page, which exchanges `#key=` for an HttpOnly cookie.
  */
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -57,13 +57,13 @@ const BASE_HEADERS = {
   'Cache-Control': 'no-cache',
 };
 
-const GATE_HTML = `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>cloudfact</title>
-<style>body{font:16px system-ui;margin:3rem;color:#333}</style><body><p id="m">Autenticando…</p>
+const GATE_HTML = `<!doctype html><html lang="en"><meta charset="utf-8"><title>cloudfact</title>
+<style>body{font:16px system-ui;margin:3rem;color:#333}</style><body><p id="m">Signing in…</p>
 <script>(async()=>{const el=document.getElementById('m');const m=location.hash.match(/key=([^&]+)/);
-if(!m){el.textContent='Página privada: abra pelo link completo (com #key=…).';return}
+if(!m){el.textContent='Private page: open it through the full link (with #key=…).';return}
 const r=await fetch('/api/session',{method:'POST',headers:{Authorization:'Bearer '+decodeURIComponent(m[1])}});
 if(r.ok){history.replaceState(null,'',location.pathname+location.search);location.reload()}
-else el.textContent='Chave inválida.'})()</script></body></html>`;
+else el.textContent='Invalid key.'})()</script></body></html>`;
 
 function send(res: ServerResponse, code: number, body: string | Buffer, headers: Record<string, string> = {}): void {
   const buf = Buffer.isBuffer(body) ? body : Buffer.from(body);
@@ -86,12 +86,12 @@ function listing(urlPath: string, absDir: string): string {
     })
     .join('');
   const up = urlPath !== '/' ? '<li><a href="../">../</a></li>' : '';
-  return `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>${escapeHtml(urlPath)}</title>
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><title>${escapeHtml(urlPath)}</title>
 <style>body{font:15px system-ui;margin:2rem;color:#222}li{margin:.25rem 0}</style>
 <body><h1>${escapeHtml(urlPath)}</h1><ul>${up}${rows}</ul></body></html>`;
 }
 
-/** Resolve um caminho de URL dentro de root. null = recusado (traversal, dotfile, inválido). */
+/** Resolves a URL path inside root. null = refused (traversal, dotfile, malformed). */
 export function safeResolve(root: string, urlPath: string): string | null {
   let decoded: string;
   try {

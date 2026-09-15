@@ -25,8 +25,8 @@ afterAll(() => {
   fs.rmSync(site, { recursive: true, force: true });
 });
 
-describe('backend workers (wrangler simulado)', () => {
-  it('publica uma cópia sem dotfiles/node_modules e extrai a URL', async () => {
+describe('workers backend (fake wrangler)', () => {
+  it('publishes a copy without dotfiles/node_modules and extracts the URL', async () => {
     const { deploy } = await import('../src/cloudfact.js');
     const r = await deploy({ path: site, name: 'meu-site', backend: 'workers' });
     expect(r.backend).toBe('workers');
@@ -39,23 +39,23 @@ describe('backend workers (wrangler simulado)', () => {
     expect(fs.existsSync(path.join(staged, 'node_modules'))).toBe(false);
     expect(fs.readFileSync(wranglerLog, 'utf8')).toContain('deploy --name meu-site --assets');
   });
-  it('arquivo único vira index.html', async () => {
+  it('a single file becomes index.html', async () => {
     const { deploy } = await import('../src/cloudfact.js');
     const file = path.join(site, 'sub', 'index.html');
-    const r = await deploy({ path: file, name: 'um-arquivo', backend: 'workers' });
+    const r = await deploy({ path: file, name: 'single-file', backend: 'workers' });
     expect(r.files).toBe(1);
-    expect(fs.existsSync(path.join(home, 'deploys', 'um-arquivo', 'site', 'index.html'))).toBe(true);
+    expect(fs.existsSync(path.join(home, 'deploys', 'single-file', 'site', 'index.html'))).toBe(true);
   });
-  it('private força tunnel, então não chega no wrangler', async () => {
+  it('backend aliases resolve', async () => {
     const { resolveBackend } = await import('../src/cloudfact.js');
     expect(resolveBackend('pages')).toBe('workers');
-    expect(resolveBackend('auto')).toBe('workers'); // token no env
+    expect(resolveBackend('auto')).toBe('workers'); // token in env
   });
-  it('remove apaga o worker e o registro', async () => {
+  it('remove deletes the worker and the record', async () => {
     const { remove, listDeploys } = await import('../src/cloudfact.js');
     const r = await remove('meu-site');
-    expect(r.remote).toBe('worker apagado');
+    expect(r.remote).toBe('worker deleted');
     expect(fs.readFileSync(wranglerLog, 'utf8')).toContain('delete --name meu-site --force');
-    expect(listDeploys().map((s) => s.name)).toEqual(['um-arquivo']);
+    expect(listDeploys().map((s) => s.name)).toEqual(['single-file']);
   });
 });

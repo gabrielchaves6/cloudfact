@@ -2,73 +2,73 @@
 
 _Generated from `src/mcp/tools` by `npm run docs`. Do not edit by hand._
 
-## `deploy` — Publicar página estática
+## `deploy` — Publish static site
 
-Publica uma pasta (ou um único .html) da máquina em uma URL pública na Cloudflare. Backend "tunnel" (padrão sem login): servidor local + cloudflared quick tunnel, URL *.trycloudflare.com; o processo fica em background e sobrevive ao fim da sessão. Backend "workers" (padrão quando logado): Cloudflare Workers com assets estáticos, URL fixa https://<nome>.<sub>.workers.dev; republicar atualiza no mesmo endereço. No tunnel é idempotente: se o mesmo caminho já está no ar, devolve a URL existente (reused=true). Devolve JSON com url e, quando private=true, privateUrl (já inclui #key=...).
+Publish a folder (or a single .html file) from this machine to a public Cloudflare URL. "tunnel" backend (default when signed out): local static server + cloudflared quick tunnel, *.trycloudflare.com URL; the process runs in the background and outlives the session. "workers" backend (default when signed in): Cloudflare Workers with static assets, fixed URL https://<name>.<sub>.workers.dev; redeploying updates the same address. Idempotent on tunnel: if the same path is already live, returns the existing URL (reused=true). Returns JSON with url and, when private=true, privateUrl (already includes #key=...).
 
 _mutating, idempotent_
 
 | parameter | type | required | description |
 | --- | --- | --- | --- |
-| `path` | string | yes | Caminho absoluto da pasta ou do arquivo .html a publicar |
-| `name` | string | no | Nome do deploy (slug). Padrão: nome da pasta/arquivo |
-| `private` | boolean | no | Protege com chave: só quem abrir o privateUrl (#key=...) vê o conteúdo. Força o backend tunnel |
-| `backend` | `auto` \| `tunnel` \| `workers` | no | auto = workers se logado na Cloudflare, senão tunnel |
-| `restart` | boolean | no | Força reiniciar mesmo se já estiver no ar (gera URL nova no tunnel) |
+| `path` | string | yes | Absolute path of the folder or .html file to publish |
+| `name` | string | no | Deploy name (slug). Defaults to the folder/file name |
+| `private` | boolean | no | Key-protected: only whoever opens privateUrl (#key=...) sees the content. Forces the tunnel backend |
+| `backend` | `auto` \| `tunnel` \| `workers` | no | auto = workers when signed in to Cloudflare, otherwise tunnel |
+| `restart` | boolean | no | Restart even if already live (yields a new URL on tunnel) |
 
-## `list` — Listar deploys
+## `list` — List deploys
 
-Lista todos os deploys do cloudfact com backend, status e URL.
+List every cloudfact deploy with backend, status and URL.
 
 _read-only_
 
 No parameters.
 
-## `status` — Status de um deploy
+## `status` — Deploy status
 
-Estado de um deploy, incluindo checagem HTTP da URL pública (reachable/httpStatus).
+State of one deploy, including an HTTP check of its public URL (reachable/httpStatus).
 
 _read-only_
 
 | parameter | type | required | description |
 | --- | --- | --- | --- |
-| `name` | string | yes | Nome do deploy |
+| `name` | string | yes | Deploy name |
 
-## `stop` — Parar deploy
+## `stop` — Stop deploy
 
-Encerra o servidor local e o túnel de um deploy (ou de todos com all=true). O registro fica para consulta. Não se aplica ao backend workers.
+Stop the local server and tunnel of one deploy (or all of them with all=true). The record is kept for inspection. Not applicable to the workers backend.
 
 _mutating_
 
 | parameter | type | required | description |
 | --- | --- | --- | --- |
-| `name` | string | no | Nome do deploy |
-| `all` | boolean | no | Parar todos os túneis |
+| `name` | string | no | Deploy name |
+| `all` | boolean | no | Stop every tunnel |
 
-## `remove` — Remover deploy
+## `remove` — Remove deploy
 
-Para (se estiver rodando) e apaga o registro e logs do deploy. No backend workers, apaga também o worker na Cloudflare.
+Stop (if running) and delete the deploy record and logs. On the workers backend, also deletes the worker on Cloudflare.
 
 _mutating, destructive_
 
 | parameter | type | required | description |
 | --- | --- | --- | --- |
-| `name` | string | yes | Nome do deploy |
+| `name` | string | yes | Deploy name |
 
-## `logs` — Logs de um deploy
+## `logs` — Deploy logs
 
-Últimas linhas dos logs do deploy: host (servidor local), cloudflared e wrangler.
+Last lines of the deploy logs: host (local server), cloudflared and wrangler.
 
 _read-only_
 
 | parameter | type | required | description |
 | --- | --- | --- | --- |
-| `name` | string | yes | Nome do deploy |
-| `lines` | number | no | Quantidade de linhas (padrão 40) |
+| `name` | string | yes | Deploy name |
+| `lines` | number | no | Number of lines (default 40) |
 
-## `doctor` — Diagnóstico
+## `doctor` — Diagnostics
 
-Diagnóstico: cloudflared, login na Cloudflare, backend padrão e deploys ativos. Rode antes de deploy quando algo falhar.
+Diagnostics: cloudflared, Cloudflare sign-in, default backend and active deploys. Run it before deploy when something fails.
 
 _read-only_
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Simula o wrangler para os testes do backend workers. Registra os argumentos em $FAKE_WRANGLER_LOG.
+# Fake wrangler for the workers backend tests. Records its arguments in $FAKE_WRANGLER_LOG.
 echo "$*" >> "${FAKE_WRANGLER_LOG:-/dev/null}"
 case "$1" in
   deploy)

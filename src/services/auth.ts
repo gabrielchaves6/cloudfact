@@ -18,7 +18,7 @@ async function api<T>(pathname: string, token: string): Promise<T> {
   try {
     body = (await res.json()) as ApiEnvelope<T>;
   } catch {
-    /* corpo vazio */
+    /* empty body */
   }
   if (!res.ok || body?.success === false) {
     throw new Error(body?.errors?.map((e) => e.message).join('; ') || `HTTP ${res.status}`);
@@ -43,7 +43,7 @@ export interface LoginResult {
   config: string;
 }
 
-/** Login com token de API: valida, descobre a conta e salva na config (0600). */
+/** API-token sign-in: validates the token, discovers the account and stores both in the config file (0600). */
 export async function loginWithToken(opts: {
   token?: string;
   accountId?: string;
@@ -54,34 +54,34 @@ export async function loginWithToken(opts: {
   const interactive = opts.interactive ?? Boolean(process.stdin.isTTY);
   let token = opts.token;
   if (!token) {
-    if (!interactive) throw new Error(`token ausente. Crie um em ${TOKEN_URL} e rode: cloudfact login --token <token>`);
-    say(`Crie um token de API em ${TOKEN_URL}\n  → "Create Token" → template "Edit Cloudflare Workers"\n`);
-    token = await ask('Cole o token: ');
-    if (!token) throw new Error('token vazio');
+    if (!interactive) throw new Error(`missing token. Create one at ${TOKEN_URL} and run: cloudfact login --token <token>`);
+    say(`Create an API token at ${TOKEN_URL}\n  → "Create Token" → "Edit Cloudflare Workers" template\n`);
+    token = await ask('Paste the token: ');
+    if (!token) throw new Error('empty token');
   }
   let verify: { id: string; status: string };
   try {
     verify = await api('/user/tokens/verify', token);
   } catch (e) {
-    throw new Error(`token inválido: ${(e as Error).message}`, { cause: e });
+    throw new Error(`invalid token: ${(e as Error).message}`, { cause: e });
   }
-  if (verify.status !== 'active') throw new Error(`token com status "${verify.status}"`);
+  if (verify.status !== 'active') throw new Error(`token status is "${verify.status}"`);
 
   let accounts: { id: string; name: string }[] = [];
   try {
     accounts = await api('/accounts?per_page=50', token);
   } catch (e) {
-    say(`aviso: não consegui listar contas (${(e as Error).message})`);
+    say(`warning: could not list accounts (${(e as Error).message})`);
   }
   let accountId = opts.accountId ?? null;
   if (!accountId && accounts.length === 1) accountId = accounts[0].id;
   if (!accountId && accounts.length > 1) {
     const menu = accounts.map((a, i) => `  [${i + 1}] ${a.name}  (${a.id})`).join('\n');
-    if (!interactive) throw new Error(`token acessa ${accounts.length} contas; passe --account-id:\n${menu}`);
-    say(`Contas disponíveis:\n${menu}`);
-    const n = Number(await ask('Qual? '));
+    if (!interactive) throw new Error(`the token can access ${accounts.length} accounts; pass --account-id:\n${menu}`);
+    say(`Available accounts:\n${menu}`);
+    const n = Number(await ask('Which one? '));
     accountId = accounts[n - 1]?.id ?? null;
-    if (!accountId) throw new Error('escolha inválida');
+    if (!accountId) throw new Error('invalid choice');
   }
   const account = accounts.find((a) => a.id === accountId);
   writeConfig({
@@ -95,8 +95,8 @@ export async function loginWithToken(opts: {
 }
 
 /**
- * Login OAuth pelo navegador (`wrangler login --device`): emite link + código via onPrompt
- * e espera a aprovação. Funciona em máquinas sem browser: aprova-se de qualquer dispositivo.
+ * Browser OAuth sign-in (`wrangler login --device`): emits the link + code through onPrompt and waits
+ * for approval. Works on machines without a browser: approve from any device.
  */
 export async function loginWithDevice(opts: { onPrompt?: (text: string) => void; timeoutMs?: number } = {}): Promise<LoginResult> {
   const onPrompt = opts.onPrompt ?? ((t) => process.stderr.write(t));
@@ -130,7 +130,7 @@ export async function loginWithDevice(opts: { onPrompt?: (text: string) => void;
     });
   });
   if (code !== 0 || !/Successfully logged in/i.test(out)) {
-    throw new Error(`login por navegador não concluiu (exit ${code}):\n${out.trim().split('\n').slice(-6).join('\n')}`);
+    throw new Error(`browser sign-in did not complete (exit ${code}):\n${out.trim().split('\n').slice(-6).join('\n')}`);
   }
   writeConfig({ ...readConfig(), cloudflareAuth: 'wrangler', loggedInAt: new Date().toISOString() });
   return { ok: true, source: 'wrangler', config: path.join(HOME, 'config.json') };
@@ -144,7 +144,7 @@ export function logout(): { ok: true; removed: boolean; note?: string } {
     removed: Boolean(cloudflareApiToken || cloudflareAuth),
     note:
       cloudflareAuth === 'wrangler'
-        ? 'a credencial OAuth do wrangler continua em ~/.config/.wrangler; `npx wrangler logout` revoga'
+        ? "wrangler's OAuth credential is still in ~/.config/.wrangler; `npx wrangler logout` revokes it"
         : undefined,
   };
 }

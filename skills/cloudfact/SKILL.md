@@ -1,35 +1,35 @@
 ---
 name: cloudfact
-description: Publica uma pasta ou um .html gerado na VM em uma URL pública na Cloudflare com um comando (/cloudfact <caminho> [--private] [--name x] [--tunnel|--workers]). Use quando o usuário pedir para "subir", "hospedar", "publicar", "abrir no navegador" ou "me dá um link" de um HTML/site estático.
-argument-hint: <pasta ou arquivo.html> [--private] [--name nome] [--tunnel|--workers] [--restart]
+description: Publish a folder or an HTML file generated on this machine to a public Cloudflare URL with one command (/cloudfact <path> [--private] [--name x] [--tunnel|--workers]). Use whenever the user asks to "host", "publish", "put online", "open in a browser" or "give me a link" for an HTML file or static site.
+argument-hint: <folder or file.html> [--private] [--name name] [--tunnel|--workers] [--restart]
 ---
 
-# /cloudfact — publicar página estática na Cloudflare
+# /cloudfact — publish a static page to Cloudflare
 
-Você tem o MCP `cloudfact` disponível (tools `deploy`, `list`, `status`, `stop`, `remove`, `logs`, `doctor`).
-Se as tools MCP não estiverem carregadas nesta sessão, use o CLI equivalente via shell:
-`cloudfact deploy <caminho> [--private] [--name n] [--backend tunnel|workers] [--restart] --json`.
+The `cloudfact` MCP server is available (tools `deploy`, `list`, `status`, `stop`, `remove`, `logs`, `doctor`).
+If the MCP tools are not loaded in this session, use the equivalent CLI through the shell:
+`cloudfact deploy <path> [--private] [--name n] [--backend tunnel|workers] [--restart] --json`.
 
-## Passos
+## Steps
 
-1. **Resolver o caminho.** Argumentos: `$ARGUMENTS`.
-   - Sem argumento: use o último HTML/pasta que você gerou nesta conversa; se não houver, procure `index.html` no diretório atual. Se ainda assim for ambíguo, pergunte.
-   - Um `.html` isolado é servido sozinho (assets relativos NÃO vão junto). Se a página depende de css/js/imagens locais, publique a **pasta**.
-   - Converta para caminho absoluto.
-2. **Publicar** com a tool `deploy`:
-   - `path`: caminho absoluto.
-   - `private: true` se `--private` foi passado ou se o conteúdo é sensível (dados internos, credenciais, painéis). Em dúvida com dados de negócio, prefira privado. Privado força `backend: "tunnel"`.
-   - `name`: de `--name`, senão deixe o padrão.
-   - `backend`: `"tunnel"` se `--tunnel`, `"workers"` se `--workers`; senão `auto` (workers com URL fixa se estiver logado, túnel rápido caso contrário; `doctor` mostra).
-   - `restart: true` se `--restart`.
-3. **Responder** de forma curta:
-   - A URL clicável (use `privateUrl` quando existir, ela já carrega a chave no `#key=`).
-   - Uma linha dizendo que é túnel rápido (URL muda se reiniciar; processo segue vivo em background) ou Workers (URL fixa, republicar atualiza no mesmo endereço).
-   - Como parar: `cloudfact stop <nome>` ou a tool `stop`.
-4. **Se falhar**, rode `doctor` e `logs` do deploy, explique a causa e o que fazer. Se o usuário quiser URL fixa e não estiver logado, rode `cloudfact login --device` em background (shell), leia o link e o código da saída, mostre ao usuário e espere a aprovação (vale 5 min). Nunca peça o token no chat.
+1. **Resolve the path.** Arguments: `$ARGUMENTS`.
+   - No argument: use the last HTML file or folder you generated in this conversation; otherwise look for `index.html` in the current directory. If it is still ambiguous, ask.
+   - A single `.html` is served alone (relative assets are NOT included). If the page depends on local css/js/images, publish the **folder**.
+   - Convert to an absolute path.
+2. **Publish** with the `deploy` tool:
+   - `path`: absolute path.
+   - `private: true` if `--private` was passed or the content is sensitive (internal data, credentials, dashboards). When in doubt with business data, prefer private. Private forces `backend: "tunnel"`.
+   - `name`: from `--name`, otherwise keep the default.
+   - `backend`: `"tunnel"` for `--tunnel`, `"workers"` for `--workers`; otherwise `auto` (workers with a fixed URL when signed in, quick tunnel otherwise; `doctor` shows which).
+   - `restart: true` for `--restart`.
+3. **Reply** briefly:
+   - The clickable URL (use `privateUrl` when present; it already carries the key in `#key=`).
+   - One line saying whether it is a quick tunnel (URL changes on restart; the process keeps running in the background) or Workers (fixed URL; redeploying updates it in place).
+   - How to stop: `cloudfact stop <name>` or the `stop` tool.
+4. **On failure**, run `doctor` and `logs` for the deploy, explain the cause and the fix. If the user wants a fixed URL and is not signed in, run `cloudfact login --device` in the background (shell), read the link and the code from its output, show them to the user and wait for approval (valid for 5 minutes). Never ask for the token in the chat.
 
-## Regras
+## Rules
 
-- Nunca copie a chave privada para arquivos do projeto do usuário; ela já está em `~/.cloudfact/deploys/<nome>/state.json` (0600).
-- Não republique em loop: `deploy` é idempotente e devolve a URL existente se o mesmo caminho já estiver no ar (`reused: true`).
-- Não sirva `/` ou `$HOME` inteiros; se o usuário pedir, aponte para uma subpasta específica.
+- Never copy the private key into the user's project files; it already lives in `~/.cloudfact/deploys/<name>/state.json` (0600).
+- Do not republish in a loop: `deploy` is idempotent and returns the existing URL when the same path is already live (`reused: true`).
+- Never serve `/` or `$HOME` as a whole; if asked, point at a specific subfolder.

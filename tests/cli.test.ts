@@ -25,25 +25,25 @@ async function run(args: string[]): Promise<{ code: number; out: string; err: st
 }
 
 describe('cli', () => {
-  it('sem argumentos mostra ajuda', async () => {
+  it('shows help without arguments', async () => {
     const r = await run([]);
     expect(r.code).toBe(0);
     expect(r.out).toContain('cloudfact deploy');
   });
-  it('doctor --json devolve JSON válido', async () => {
+  it('doctor --json returns valid JSON', async () => {
     const r = await run(['doctor', '--json']);
     expect(r.code).toBe(0);
     expect(JSON.parse(r.out)).toHaveProperty('defaultBackend');
   });
-  it('list vazio', async () => {
-    expect((await run(['list'])).out).toBe('nenhum deploy');
+  it('empty list', async () => {
+    expect((await run(['list'])).out).toBe('no deploys');
   });
-  it('comando desconhecido devolve 2', async () => {
+  it('unknown command returns 2', async () => {
     const r = await run(['xyz']);
     expect(r.code).toBe(2);
-    expect(r.err).toContain('comando desconhecido');
+    expect(r.err).toContain('unknown command');
   });
-  it('status sem nome lança erro com ajuda', async () => {
-    await expect(run(['status'])).rejects.toThrow('faltou o nome');
+  it('status without a name throws with help', async () => {
+    await expect(run(['status'])).rejects.toThrow('missing the deploy name');
   });
 });

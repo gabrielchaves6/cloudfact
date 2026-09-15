@@ -4,56 +4,57 @@ import { defineTool } from '../define-tool.js';
 
 export const listTool = defineTool({
   name: 'list',
-  description: 'Lista todos os deploys do cloudfact com backend, status e URL.',
-  annotations: { title: 'Listar deploys', readOnlyHint: true },
+  description: 'List every cloudfact deploy with backend, status and URL.',
+  annotations: { title: 'List deploys', readOnlyHint: true },
   schema: {},
   handler: async () => listDeploys().map(summarize),
 });
 
 export const statusTool = defineTool({
   name: 'status',
-  description: 'Estado de um deploy, incluindo checagem HTTP da URL pública (reachable/httpStatus).',
-  annotations: { title: 'Status de um deploy', readOnlyHint: true },
-  schema: { name: z.string().describe('Nome do deploy') },
+  description: 'State of one deploy, including an HTTP check of its public URL (reachable/httpStatus).',
+  annotations: { title: 'Deploy status', readOnlyHint: true },
+  schema: { name: z.string().describe('Deploy name') },
   handler: ({ name }) => status(name),
 });
 
 export const stopTool = defineTool({
   name: 'stop',
   description:
-    'Encerra o servidor local e o túnel de um deploy (ou de todos com all=true). O registro fica para consulta. Não se aplica ao backend workers.',
-  annotations: { title: 'Parar deploy', readOnlyHint: false, destructiveHint: false },
-  schema: { name: z.string().optional().describe('Nome do deploy'), all: z.boolean().optional().describe('Parar todos os túneis') },
+    'Stop the local server and tunnel of one deploy (or all of them with all=true). The record is kept for inspection. Not applicable to the workers backend.',
+  annotations: { title: 'Stop deploy', readOnlyHint: false, destructiveHint: false },
+  schema: { name: z.string().optional().describe('Deploy name'), all: z.boolean().optional().describe('Stop every tunnel') },
   handler: ({ name, all }) => {
     if (all) return stopAll();
-    if (!name) throw new Error('informe name ou all=true');
+    if (!name) throw new Error('pass name or all=true');
     return stop(name);
   },
 });
 
 export const removeTool = defineTool({
   name: 'remove',
-  description: 'Para (se estiver rodando) e apaga o registro e logs do deploy. No backend workers, apaga também o worker na Cloudflare.',
-  annotations: { title: 'Remover deploy', readOnlyHint: false, destructiveHint: true },
-  schema: { name: z.string().describe('Nome do deploy') },
+  description: 'Stop (if running) and delete the deploy record and logs. On the workers backend, also deletes the worker on Cloudflare.',
+  annotations: { title: 'Remove deploy', readOnlyHint: false, destructiveHint: true },
+  schema: { name: z.string().describe('Deploy name') },
   handler: ({ name }) => remove(name),
 });
 
 export const logsTool = defineTool({
   name: 'logs',
-  description: 'Últimas linhas dos logs do deploy: host (servidor local), cloudflared e wrangler.',
-  annotations: { title: 'Logs de um deploy', readOnlyHint: true },
+  description: 'Last lines of the deploy logs: host (local server), cloudflared and wrangler.',
+  annotations: { title: 'Deploy logs', readOnlyHint: true },
   schema: {
-    name: z.string().describe('Nome do deploy'),
-    lines: z.number().int().min(1).max(500).optional().describe('Quantidade de linhas (padrão 40)'),
+    name: z.string().describe('Deploy name'),
+    lines: z.number().int().min(1).max(500).optional().describe('Number of lines (default 40)'),
   },
   handler: async ({ name, lines }) => readLogs(name, lines ?? 40),
 });
 
 export const doctorTool = defineTool({
   name: 'doctor',
-  description: 'Diagnóstico: cloudflared, login na Cloudflare, backend padrão e deploys ativos. Rode antes de deploy quando algo falhar.',
-  annotations: { title: 'Diagnóstico', readOnlyHint: true },
+  description:
+    'Diagnostics: cloudflared, Cloudflare sign-in, default backend and active deploys. Run it before deploy when something fails.',
+  annotations: { title: 'Diagnostics', readOnlyHint: true },
   schema: {},
   handler: () => doctor(),
 });

@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsup';
 
-// Três entradas, cada uma um arquivo único sem dependências externas em runtime:
-// server.js (MCP stdio), bin.js (CLI), host.js (processo do túnel, spawnado pelo core).
+// Each entry is a single file with no external runtime dependencies:
+// server.js (MCP over stdio), bin.js (CLI), host.js (tunnel process spawned by the core), index.js (library).
 export default defineConfig({
   entry: { server: 'src/server.ts', bin: 'src/bin.ts', host: 'src/backends/tunnel/host.ts', index: 'src/index.ts' },
   format: ['esm'],

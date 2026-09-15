@@ -37,23 +37,23 @@ export function cloudflaredVersion(bin: string): string | null {
 
 function releaseAsset(): { url: string; tgz: boolean } {
   const arch = { x64: 'amd64', arm64: 'arm64', arm: 'arm' }[process.arch as 'x64' | 'arm64' | 'arm'];
-  if (!arch) throw new Error(`arquitetura sem build do cloudflared: ${process.arch}`);
+  if (!arch) throw new Error(`no cloudflared build for architecture ${process.arch}`);
   if (process.platform === 'linux') return { url: `${RELEASES}/cloudflared-linux-${arch}`, tgz: false };
   if (process.platform === 'darwin') return { url: `${RELEASES}/cloudflared-darwin-${arch}.tgz`, tgz: true };
   throw new Error(
-    `instale o cloudflared manualmente para ${process.platform}: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/`,
+    `install cloudflared manually for ${process.platform}: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/`,
   );
 }
 
-/** Baixa o cloudflared oficial para ~/.cloudfact/bin (Linux/macOS) e devolve o caminho. */
+/** Downloads the official cloudflared into ~/.cloudfact/bin (Linux/macOS) and returns its path. */
 export async function installCloudflared(onProgress: (msg: string) => void = () => {}): Promise<string> {
   const dest = path.join(BIN_DIR, 'cloudflared');
   if (fs.existsSync(dest)) return dest;
   const { url, tgz } = releaseAsset();
   fs.mkdirSync(BIN_DIR, { recursive: true, mode: 0o700 });
-  onProgress(`baixando cloudflared: ${url}`);
+  onProgress(`downloading cloudflared: ${url}`);
   const res = await fetch(url, { redirect: 'follow' });
-  if (!res.ok || !res.body) throw new Error(`download do cloudflared falhou: HTTP ${res.status}`);
+  if (!res.ok || !res.body) throw new Error(`cloudflared download failed: HTTP ${res.status}`);
   const tmp = `${dest}.part`;
   if (!tgz) {
     await pipeline(Readable.fromWeb(res.body as never), fs.createWriteStream(tmp, { mode: 0o755 }));
@@ -62,16 +62,16 @@ export async function installCloudflared(onProgress: (msg: string) => void = () 
     await pipeline(Readable.fromWeb(res.body as never), createGunzip(), fs.createWriteStream(tar));
     const x = spawnSync('tar', ['-xf', tar, '-C', BIN_DIR, 'cloudflared'], { encoding: 'utf8' });
     fs.rmSync(tar, { force: true });
-    if (x.status !== 0) throw new Error(`tar falhou: ${x.stderr}`);
+    if (x.status !== 0) throw new Error(`tar failed: ${x.stderr}`);
     fs.renameSync(path.join(BIN_DIR, 'cloudflared'), tmp);
   }
   fs.chmodSync(tmp, 0o755);
   const version = cloudflaredVersion(tmp);
   if (!version) {
     fs.rmSync(tmp, { force: true });
-    throw new Error('binário baixado não roda');
+    throw new Error('downloaded binary does not run');
   }
   fs.renameSync(tmp, dest);
-  onProgress(`cloudflared instalado em ${dest} (${version})`);
+  onProgress(`cloudflared installed at ${dest} (${version})`);
   return dest;
 }

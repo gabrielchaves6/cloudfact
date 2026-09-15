@@ -6,7 +6,7 @@ import type { Credentials } from '../types.js';
 // eslint-disable-next-line no-control-regex
 export const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, '');
 
-/** Credenciais para a Cloudflare: token de API (env/config) ou login OAuth do wrangler. */
+/** Cloudflare credentials: API token (env/config) or wrangler's OAuth login. */
 export function credentials(cfg: Config = readConfig()): Credentials | null {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID ?? cfg.cloudflareAccountId ?? null;
   const token = process.env.CLOUDFLARE_API_TOKEN ?? cfg.cloudflareApiToken;
@@ -16,7 +16,7 @@ export function credentials(cfg: Config = readConfig()): Credentials | null {
       return { source: 'wrangler', token: null, accountId };
     }
   } catch {
-    /* sem login do wrangler */
+    /* no wrangler login */
   }
   return null;
 }
@@ -37,7 +37,7 @@ export interface RunResult {
   text: string;
 }
 
-/** Roda o wrangler de forma síncrona, anexando saída ao logFile se informado. */
+/** Runs wrangler synchronously, appending its output to logFile when given. */
 export function runWrangler(
   args: string[],
   opts: { cfg?: Config; creds?: Credentials | null; cwd?: string; logFile?: string } = {},

@@ -1,4 +1,4 @@
-/** API pública do cloudfact: o que o MCP e o CLI expõem. */
+/** cloudfact public API: what the MCP server and the CLI expose. */
 import fs from 'node:fs';
 import path from 'node:path';
 import { HOME, VERSION, readConfig } from './config.js';
@@ -28,7 +28,7 @@ function resolveTarget(target?: string): Target {
   try {
     stat = fs.statSync(abs);
   } catch {
-    throw new Error(`caminho não existe: ${abs}`);
+    throw new Error(`path does not exist: ${abs}`);
   }
   if (stat.isDirectory()) return { mode: 'dir', root: abs, file: null, defaultName: path.basename(abs) };
   return { mode: 'file', root: null, file: abs, defaultName: path.basename(abs, path.extname(abs)) };
@@ -36,10 +36,10 @@ function resolveTarget(target?: string): Target {
 
 export function resolveBackend(choice: DeployOptions['backend']): Backend {
   const c = choice ?? 'auto';
-  if (c === 'pages') return 'workers'; // alias antigo
+  if (c === 'pages') return 'workers'; // legacy alias
   if (c === 'auto') return credentials() ? 'workers' : 'tunnel';
   if (c === 'tunnel' || c === 'workers') return c;
-  throw new Error(`backend desconhecido: ${String(c)}`);
+  throw new Error(`unknown backend: ${String(c)}`);
 }
 
 export async function deploy(opts: DeployOptions = {}): Promise<DeployResult> {
@@ -53,9 +53,9 @@ export async function deploy(opts: DeployOptions = {}): Promise<DeployResult> {
 
 export async function stop(name: string): Promise<{ name: string; stopped: boolean; note?: string }> {
   const s = readState(name);
-  if (!s) throw new Error(`deploy "${name}" não existe`);
+  if (!s) throw new Error(`deploy "${name}" does not exist`);
   if (s.backend === 'workers')
-    return { name, stopped: false, note: 'Workers não tem processo local; `remove` apaga o worker na Cloudflare.' };
+    return { name, stopped: false, note: 'Workers deploys have no local process; `remove` deletes the worker on Cloudflare.' };
   await stopTunnel(name);
   return { name, stopped: true };
 }
@@ -68,7 +68,7 @@ export async function stopAll(): Promise<{ name: string; stopped: boolean }[]> {
 
 export async function remove(name: string): Promise<{ name: string; removed: true; remote?: string }> {
   const s = readState(name);
-  if (!s) throw new Error(`deploy "${name}" não existe`);
+  if (!s) throw new Error(`deploy "${name}" does not exist`);
   let remote: string | undefined;
   if (s.backend === 'tunnel') await stopTunnel(name);
   if (s.backend === 'workers' && s.status === 'deployed') remote = deleteWorker(name);
@@ -84,7 +84,7 @@ export interface StatusResult extends DeploySummary {
 
 export async function status(name: string, opts: { check?: boolean } = {}): Promise<StatusResult> {
   const s = effectiveState(name);
-  if (!s) throw new Error(`deploy "${name}" não existe`);
+  if (!s) throw new Error(`deploy "${name}" does not exist`);
   const out: StatusResult = summarize(s);
   if ((opts.check ?? true) && s.url) {
     try {
@@ -121,10 +121,10 @@ export async function doctor(): Promise<DoctorReport> {
     home: HOME,
     cloudflared: bin
       ? { path: bin, version: cloudflaredVersion(bin) }
-      : { missing: true, hint: 'será baixado automaticamente no primeiro deploy (ou rode `cloudfact setup`)' },
+      : { missing: true, hint: 'downloaded automatically on the first deploy (or run `cloudfact setup`)' },
     cloudflare: creds
       ? { loggedIn: true, source: creds.source, accountId: creds.accountId, accountName: cfg.cloudflareAccountName ?? null }
-      : { loggedIn: false, hint: 'rode `cloudfact login --device` (navegador) ou `cloudfact login --token <token>`' },
+      : { loggedIn: false, hint: 'run `cloudfact login --device` (browser) or `cloudfact login --token <token>`' },
     defaultBackend: creds ? 'workers' : 'tunnel',
     deploys: listDeploys().map((s) => ({ name: s.name, backend: s.backend, status: s.status, url: s.url ?? null })),
   };

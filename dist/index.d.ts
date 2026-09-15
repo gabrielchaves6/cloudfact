@@ -15,7 +15,7 @@ interface DeployState {
     startedAt: string;
     url?: string | null;
     privateUrl?: string | null;
-    /** Chave do modo privado. Nunca sai em respostas cruas; use summarize(). */
+    /** Private-mode key. Never returned raw; use summarize(). */
     key?: string | null;
     error?: string | null;
     hostPid?: number | null;
@@ -29,7 +29,7 @@ interface DeployState {
     versionId?: string | null;
     deployedAt?: string;
 }
-/** Estado sem a chave privada (o privateUrl já a contém). */
+/** State without the private key (privateUrl already carries it). */
 type DeploySummary = Omit<DeployState, 'key'>;
 interface DeployOptions {
     path?: string;
@@ -59,7 +59,7 @@ interface LoginResult {
     accountName?: string | null;
     config: string;
 }
-/** Login com token de API: valida, descobre a conta e salva na config (0600). */
+/** API-token sign-in: validates the token, discovers the account and stores both in the config file (0600). */
 declare function loginWithToken(opts: {
     token?: string;
     accountId?: string;
@@ -67,8 +67,8 @@ declare function loginWithToken(opts: {
     onMessage?: (m: string) => void;
 }): Promise<LoginResult>;
 /**
- * Login OAuth pelo navegador (`wrangler login --device`): emite link + código via onPrompt
- * e espera a aprovação. Funciona em máquinas sem browser: aprova-se de qualquer dispositivo.
+ * Browser OAuth sign-in (`wrangler login --device`): emits the link + code through onPrompt and waits
+ * for approval. Works on machines without a browser: approve from any device.
  */
 declare function loginWithDevice(opts?: {
     onPrompt?: (text: string) => void;
@@ -82,7 +82,7 @@ declare function logout(): {
 
 declare const VERSION: string;
 
-/** Baixa o cloudflared oficial para ~/.cloudfact/bin (Linux/macOS) e devolve o caminho. */
+/** Downloads the official cloudflared into ~/.cloudfact/bin (Linux/macOS) and returns its path. */
 declare function installCloudflared(onProgress?: (msg: string) => void): Promise<string>;
 
 declare function resolveBackend(choice: DeployOptions['backend']): Backend;
@@ -139,7 +139,7 @@ interface DoctorReport {
 }
 declare function doctor(): Promise<DoctorReport>;
 
-/** Monta o McpServer do cloudfact com todas as tools e o prompt. Transporte fica a cargo de quem chama. */
+/** Builds the cloudfact McpServer with every tool and the prompt. The caller picks the transport. */
 declare function createServer(): McpServer;
 
 interface ToolAnnotations {

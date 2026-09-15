@@ -4,7 +4,7 @@ import { VERSION } from '../config.js';
 import { errorResult, textResult } from './define-tool.js';
 import { tools } from './tools/index.js';
 
-/** Monta o McpServer do cloudfact com todas as tools e o prompt. Transporte fica a cargo de quem chama. */
+/** Builds the cloudfact McpServer with every tool and the prompt. The caller picks the transport. */
 export function createServer(): McpServer {
   const server = new McpServer({ name: 'cloudfact', version: VERSION });
   for (const tool of tools) {
@@ -23,9 +23,9 @@ export function createServer(): McpServer {
   server.registerPrompt(
     'cloudfact',
     {
-      title: 'Publicar na Cloudflare',
-      description: 'Publica um caminho da máquina e devolve a URL',
-      argsSchema: { path: z.string().describe('pasta ou .html') },
+      title: 'Publish to Cloudflare',
+      description: 'Publish a path from this machine and return the URL',
+      argsSchema: { path: z.string().describe('folder or .html file') },
     },
     ({ path }) => ({
       messages: [
@@ -33,7 +33,7 @@ export function createServer(): McpServer {
           role: 'user',
           content: {
             type: 'text',
-            text: `Publique ${path} com a tool deploy do cloudfact e me devolva a URL pública. Se falhar, rode doctor e logs e explique.`,
+            text: `Publish ${path} with the cloudfact deploy tool and give me the public URL. If it fails, run doctor and logs and explain.`,
           },
         },
       ],

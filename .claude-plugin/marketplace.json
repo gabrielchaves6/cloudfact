@@ -1,12 +1,12 @@
 {
   "name": "cloudfact",
   "owner": { "name": "Gabriel Chaves", "url": "https://github.com/gabrielchaves6" },
-  "metadata": { "description": "Marketplace do cloudfact: publicar páginas estáticas na Cloudflare com um comando." },
+  "metadata": { "description": "cloudfact marketplace: publish static pages to Cloudflare with one command." },
   "plugins": [
     {
       "name": "cloudfact",
       "source": "./",
-      "description": "Publique um HTML ou uma pasta em uma URL pública na Cloudflare com /cloudfact.",
+      "description": "Publish an HTML file or a folder to a public Cloudflare URL with /cloudfact.",
       "version": "0.3.0",
       "category": "deployment"
     }

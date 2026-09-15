@@ -22,26 +22,26 @@ afterAll(async () => {
 
 const text = (r: Awaited<ReturnType<Client['callTool']>>) => (r.content as { text: string }[])[0].text;
 
-describe('servidor MCP', () => {
-  it('expõe as tools com anotações', async () => {
+describe('MCP server', () => {
+  it('exposes the tools with annotations', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual(['deploy', 'doctor', 'list', 'logs', 'remove', 'status', 'stop']);
     expect(tools.find((t) => t.name === 'list')?.annotations?.readOnlyHint).toBe(true);
     expect(tools.find((t) => t.name === 'remove')?.annotations?.destructiveHint).toBe(true);
   });
-  it('doctor e list respondem JSON', async () => {
+  it('doctor and list answer JSON', async () => {
     const d = JSON.parse(text(await client.callTool({ name: 'doctor', arguments: {} })));
     expect(['tunnel', 'workers']).toContain(d.defaultBackend);
     expect(JSON.parse(text(await client.callTool({ name: 'list', arguments: {} })))).toEqual([]);
   });
-  it('erros viram isError, não exceções', async () => {
+  it('errors become isError, not exceptions', async () => {
     const r = await client.callTool({ name: 'status', arguments: { name: 'nao-existe' } });
     expect(r.isError).toBe(true);
-    expect(text(r)).toContain('não existe');
+    expect(text(r)).toContain('does not exist');
   });
-  it('deploy de caminho inexistente falha com mensagem clara', async () => {
-    const r = await client.callTool({ name: 'deploy', arguments: { path: '/caminho/que/nao/existe' } });
+  it('deploy of a missing path fails with a clear message', async () => {
+    const r = await client.callTool({ name: 'deploy', arguments: { path: '/path/that/does/not/exist' } });
     expect(r.isError).toBe(true);
-    expect(text(r)).toContain('não existe');
+    expect(text(r)).toContain('does not exist');
   });
 });

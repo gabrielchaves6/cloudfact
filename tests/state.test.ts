@@ -10,14 +10,14 @@ beforeAll(() => {
 afterAll(() => fs.rmSync(home, { recursive: true, force: true }));
 
 describe('state', () => {
-  it('slug normaliza nomes', async () => {
+  it('slug normalizes names', async () => {
     const { slug } = await import('../src/services/state.js');
-    expect(slug('Relatório Final.html')).toBe('relatorio-final-html');
+    expect(slug('Résumé Final.html')).toBe('resume-final-html');
     expect(slug('///')).toBe('site');
   });
-  it('write/read/effective e detecção de host morto', async () => {
+  it('write/read/effective and dead-host detection', async () => {
     const { writeState, readState, effectiveState, listDeploys, summarize } = await import('../src/services/state.js');
-    const base = { name: 'x', backend: 'tunnel' as const, mode: 'dir' as const, root: '/tmp', file: null, key: 'segredo' };
+    const base = { name: 'x', backend: 'tunnel' as const, mode: 'dir' as const, root: '/tmp', file: null, key: 'secret' };
     writeState('x', {
       ...base,
       status: 'running',
@@ -30,7 +30,7 @@ describe('state', () => {
     expect(listDeploys()).toHaveLength(1);
     expect(summarize(readState('x')!)).not.toHaveProperty('key');
   });
-  it('recém-iniciado sem pid ainda conta como starting', async () => {
+  it('just-started without pid still counts as starting', async () => {
     const { writeState, effectiveState } = await import('../src/services/state.js');
     writeState('y', {
       name: 'y',

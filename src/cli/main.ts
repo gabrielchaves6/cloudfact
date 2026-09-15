@@ -1,24 +1,24 @@
 import { parseArgs } from 'node:util';
 import * as cf from '../cloudfact.js';
 
-const HELP = `cloudfact ${cf.VERSION} — publica páginas estáticas da máquina na Cloudflare
+const HELP = `cloudfact ${cf.VERSION} — publish static pages from this machine to Cloudflare
 
-uso:
-  cloudfact deploy [caminho] [--name n] [--private] [--backend auto|tunnel|workers] [--restart] [--json]
+usage:
+  cloudfact deploy [path] [--name n] [--private] [--backend auto|tunnel|workers] [--restart] [--json]
   cloudfact list [--json]
-  cloudfact status <nome> [--json]
-  cloudfact stop <nome> | --all
-  cloudfact rm <nome>
-  cloudfact logs <nome> [-n 40]
+  cloudfact status <name> [--json]
+  cloudfact stop <name> | --all
+  cloudfact rm <name>
+  cloudfact logs <name> [-n 40]
   cloudfact doctor
-  cloudfact setup                                (baixa o cloudflared para ~/.cloudfact/bin se faltar)
-  cloudfact login --device                       (autoriza no navegador de qualquer dispositivo; sem colar token)
-  cloudfact login [--token T] [--account-id ID]  (token de API da Cloudflare)
+  cloudfact setup                                (download cloudflared into ~/.cloudfact/bin if missing)
+  cloudfact login --device                       (approve in a browser on any device; no token pasting)
+  cloudfact login [--token T] [--account-id ID]  (Cloudflare API token)
   cloudfact logout
-  cloudfact mcp                                  (servidor MCP via stdio)
+  cloudfact mcp                                  (MCP server over stdio)
 
-caminho = pasta (serve tudo, index.html na raiz) ou um único .html.
-backend auto = workers (URL fixa *.workers.dev) se logado na Cloudflare, senão túnel rápido (trycloudflare.com, sem conta).`;
+path = a folder (served whole, index.html at the root) or a single .html file.
+backend auto = workers (fixed *.workers.dev URL) when signed in to Cloudflare, otherwise quick tunnel (trycloudflare.com, no account).`;
 
 export async function main(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
@@ -41,7 +41,7 @@ export async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = positionals;
   const print = (value: unknown) => console.log(typeof value === 'string' && !values.json ? value : JSON.stringify(value, null, 2));
   const need = (v: string | undefined, what: string): string => {
-    if (!v) throw new Error(`faltou ${what}\n\n${HELP}`);
+    if (!v) throw new Error(`missing ${what}\n\n${HELP}`);
     return v;
   };
 
@@ -60,7 +60,7 @@ export async function main(argv: string[]): Promise<number> {
       });
       if (values.json) print(r);
       else {
-        console.log(`${r.reused ? 'já no ar' : 'publicado'}: ${r.name} (${r.backend})`);
+        console.log(`${r.reused ? 'already live' : 'published'}: ${r.name} (${r.backend})`);
         console.log(`URL: ${r.privateUrl ?? r.url}`);
         if (r.local) console.log(`local: ${r.local}`);
       }
@@ -70,24 +70,24 @@ export async function main(argv: string[]): Promise<number> {
     case 'ls': {
       const all = cf.listDeploys().map(cf.summarize);
       if (values.json) print(all);
-      else if (!all.length) console.log('nenhum deploy');
+      else if (!all.length) console.log('no deploys');
       else
         for (const s of all)
           console.log(`${s.name.padEnd(24)} ${s.backend.padEnd(8)} ${s.status.padEnd(12)} ${s.privateUrl ?? s.url ?? '-'}`);
       return 0;
     }
     case 'status':
-      print(await cf.status(need(rest[0], 'o nome')));
+      print(await cf.status(need(rest[0], 'the deploy name')));
       return 0;
     case 'stop':
-      print(values.all ? await cf.stopAll() : await cf.stop(need(rest[0], 'o nome (ou --all)')));
+      print(values.all ? await cf.stopAll() : await cf.stop(need(rest[0], 'the deploy name (or --all)')));
       return 0;
     case 'rm':
     case 'remove':
-      print(await cf.remove(need(rest[0], 'o nome')));
+      print(await cf.remove(need(rest[0], 'the deploy name')));
       return 0;
     case 'logs':
-      for (const [file, text] of Object.entries(cf.readLogs(need(rest[0], 'o nome'), Number(values.n))))
+      for (const [file, text] of Object.entries(cf.readLogs(need(rest[0], 'the deploy name'), Number(values.n))))
         console.log(`== ${file}\n${text}\n`);
       return 0;
     case 'doctor':
@@ -102,14 +102,12 @@ export async function main(argv: string[]): Promise<number> {
         print(
           values.json
             ? r
-            : 'autenticado via wrangler (OAuth). backend padrão agora é "workers" (URL fixa); --backend tunnel continua disponível.',
+            : 'signed in via wrangler (OAuth). Default backend is now "workers" (fixed URL); --backend tunnel is still available.',
         );
         return 0;
       }
       const r = await cf.loginWithToken({ token: values.token ?? process.env.CLOUDFLARE_API_TOKEN, accountId: values['account-id'] });
-      print(
-        values.json ? r : `autenticado. conta: ${r.accountName ?? '?'} (${r.accountId ?? 'sem id'}). backend padrão agora é "workers".`,
-      );
+      print(values.json ? r : `signed in. account: ${r.accountName ?? '?'} (${r.accountId ?? 'no id'}). Default backend is now "workers".`);
       return 0;
     }
     case 'logout':
@@ -119,7 +117,7 @@ export async function main(argv: string[]): Promise<number> {
       await import('../server.js');
       return 0;
     default:
-      console.error(`comando desconhecido: ${cmd}\n\n${HELP}`);
+      console.error(`unknown command: ${cmd}\n\n${HELP}`);
       return 2;
   }
 }
