@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { HOME, HOST_SCRIPT, readConfig } from '../../config.js';
 import { log } from '../../logger.js';
 import { findCloudflared, installCloudflared } from '../../services/cloudflared.js';
-import { alive, deployDir, effectiveState, isLive, readLogs, readState, summarize, writeState } from '../../services/state.js';
+import { alive, deployDir, effectiveState, isLive, patchState, readLogs, readState, summarize, writeState } from '../../services/state.js';
 import type { DeployMode, DeployResult, DeployState, SshTarget } from '../../types.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -46,6 +46,8 @@ export async function deployTunnel(t: TunnelTarget): Promise<DeployResult> {
       Boolean(existing.key) === t.private;
     if (sameTarget && !t.restart) {
       if (t.keyExpiresAt !== undefined && existing.key) writeState(t.name, { ...existing, keyExpiresAt: t.keyExpiresAt });
+      // publishing it again means it should be online: a deploy that was turned off comes back on
+      if (existing.off) patchState(t.name, { off: false });
       return { ...summarize(await waitForUrl(t.name, t.timeoutMs)), reused: true };
     }
     await stopTunnel(t.name);
@@ -62,6 +64,7 @@ export async function deployTunnel(t: TunnelTarget): Promise<DeployResult> {
     ssh: t.ssh ?? null,
     key: t.private ? newKey() : null,
     keyExpiresAt: t.private ? (t.keyExpiresAt ?? null) : null,
+    controlKey: newKey(),
     project: t.project ?? null,
     status: 'starting',
     url: null,

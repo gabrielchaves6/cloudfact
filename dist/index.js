@@ -7357,6 +7357,13 @@ function writeState(name, state) {
   fs3.writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", { mode: 384 });
   fs3.renameSync(tmp, path3.join(dir, "state.json"));
 }
+function patchState(name, patch) {
+  const current = readState(name);
+  if (!current) throw new Error(`deploy "${name}" does not exist`);
+  const next = { ...current, ...patch };
+  writeState(name, next);
+  return next;
+}
 function alive(pid) {
   if (!pid) return false;
   try {
@@ -7383,7 +7390,7 @@ function listDeploys() {
   return fs3.readdirSync(DEPLOYS_DIR).map(effectiveState).filter((s) => s !== null).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 function summarize(state) {
-  const { key: _key, ...rest } = state;
+  const { key: _key, controlKey: _controlKey, ...rest } = state;
   return rest;
 }
 function readLogs(name, lines = 40) {
@@ -7408,6 +7415,7 @@ async function deployTunnel(t) {
     const sameTarget = existing.mode === t.mode && existing.root === t.root && existing.file === t.file && (existing.targetPort ?? null) === (t.targetPort ?? null) && sameSsh(existing.ssh, t.ssh) && Boolean(existing.key) === t.private;
     if (sameTarget && !t.restart) {
       if (t.keyExpiresAt !== void 0 && existing.key) writeState(t.name, { ...existing, keyExpiresAt: t.keyExpiresAt });
+      if (existing.off) patchState(t.name, { off: false });
       return { ...summarize(await waitForUrl(t.name, t.timeoutMs)), reused: true };
     }
     await stopTunnel(t.name);
@@ -7423,6 +7431,7 @@ async function deployTunnel(t) {
     ssh: t.ssh ?? null,
     key: t.private ? newKey() : null,
     keyExpiresAt: t.private ? t.keyExpiresAt ?? null : null,
+    controlKey: newKey(),
     project: t.project ?? null,
     status: "starting",
     url: null,
@@ -7481,6 +7490,32 @@ async function stopTunnel(name) {
   });
 }
 
+// src/backends/tunnel/gate.ts
+import crypto2 from "crypto";
+var FAVICON = "data:image/png;base64,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";
+var MARK = "data:image/png;base64,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";
+var PAGE_HEAD = `<!doctype html><html lang="en"><meta charset="utf-8"><title>CloudFacts</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">
+<link rel="icon" href="${FAVICON}" sizes="any">
+<style>:root{color-scheme:dark}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0d0d0d;
+color:#f4f4f1;font:16px/1.55 'CloudFacts Sans',ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.box{max-width:26rem;padding:2rem;text-align:center}img{width:44px;height:44px}
+h1{font-size:19px;font-weight:500;margin:.9rem 0 .35rem;letter-spacing:-.005em}
+p{margin:0;color:#8e8e89;font-size:14.5px}</style>
+`;
+var OFF_HTML = `${PAGE_HEAD}<body><div class="box"><img src="${MARK}" alt=""><h1>This page is off</h1>
+<p>Its owner turned it off. The link works again as soon as they turn it back on.</p></div></body></html>`;
+var GATE_HTML = `${PAGE_HEAD}<body><div class="box"><img src="${MARK}" alt=""><h1>CloudFacts</h1><p id="m">Signing in\u2026</p></div>
+<script>(async()=>{const el=document.getElementById('m');const m=location.hash.match(/key=([^&]+)/);
+if(!m){el.textContent='Private page: open it through the full link (with #key=\u2026).';return}
+const r=await fetch('/api/session',{method:'POST',headers:{Authorization:'Bearer '+decodeURIComponent(m[1])}});
+if(r.ok){history.replaceState(null,'',location.pathname+location.search);location.reload();return}
+let msg='Invalid key.';try{const j=await r.json();if(j.error==='expired')msg='This link has expired. Ask for a new one.';if(r.status===429)msg='Too many attempts. Try again in a minute.'}catch{}
+el.textContent=msg})()</script></body></html>`;
+
+// src/backends/tunnel/power.ts
+var POWER_PATH = "/.cloudfact/power";
+
 // src/backends/workers/index.ts
 import fs6 from "fs";
 import path5 from "path";
@@ -7534,25 +7569,95 @@ ${text}`);
   return { status: r.status, text };
 }
 
-// src/backends/tunnel/gate.ts
-import crypto2 from "crypto";
-var FAVICON = "data:image/png;base64,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";
-var MARK = "data:image/png;base64,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";
-var GATE_HTML = `<!doctype html><html lang="en"><meta charset="utf-8"><title>CloudFacts</title>
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">
-<link rel="icon" href="${FAVICON}" sizes="any">
-<style>:root{color-scheme:dark}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0d0d0d;
-color:#f4f4f1;font:16px/1.55 'CloudFacts Sans',ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-.box{max-width:26rem;padding:2rem;text-align:center}img{width:44px;height:44px}
-h1{font-size:19px;font-weight:500;margin:.9rem 0 .35rem;letter-spacing:-.005em}
-p{margin:0;color:#8e8e89;font-size:14.5px}</style>
-<body><div class="box"><img src="${MARK}" alt=""><h1>CloudFacts</h1><p id="m">Signing in\u2026</p></div>
-<script>(async()=>{const el=document.getElementById('m');const m=location.hash.match(/key=([^&]+)/);
-if(!m){el.textContent='Private page: open it through the full link (with #key=\u2026).';return}
-const r=await fetch('/api/session',{method:'POST',headers:{Authorization:'Bearer '+decodeURIComponent(m[1])}});
-if(r.ok){history.replaceState(null,'',location.pathname+location.search);location.reload();return}
-let msg='Invalid key.';try{const j=await r.json();if(j.error==='expired')msg='This link has expired. Ask for a new one.';if(r.status===429)msg='Too many attempts. Try again in a minute.'}catch{}
-el.textContent=msg})()</script></body></html>`;
+// src/backends/workers/control-js.ts
+var CONTROL_JS = `
+// --- the catalog page's on/off switch ---
+const OFF_TAG = 'cloudfact:off';
+const answer = (status, body) => reply(status, JSON.stringify(body), { 'content-type': 'application/json' });
+function controlTargets(env) {
+  try {
+    const t = JSON.parse(env.CLOUDFACT_CONTROL_TARGETS || '{}');
+    return { workers: Array.isArray(t.workers) ? t.workers : [], tunnels: t.tunnels && typeof t.tunnels === 'object' ? t.tunnels : {} };
+  } catch {
+    return { workers: [], tunnels: {} };
+  }
+}
+async function cfApi(env, method, path, body) {
+  const res = await fetch('https://api.cloudflare.com/client/v4/accounts/' + env.CLOUDFACT_ACCOUNT_ID + path, {
+    method,
+    headers: { authorization: 'Bearer ' + env.CLOUDFACT_API_TOKEN, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {}
+  if (!res.ok || !data || data.success === false) {
+    const why = (data && data.errors && data.errors.map((e) => e.message).join('; ')) || 'HTTP ' + res.status;
+    throw new Error('Cloudflare API ' + method + ' ' + path + ' failed: ' + why);
+  }
+  return data.result;
+}
+async function switchWorker(env, name, on) {
+  const script = '/workers/scripts/' + encodeURIComponent(name);
+  const tags = (await cfApi(env, 'GET', script + '/tags')) || [];
+  // the address first: that is what takes the page down, or brings it back
+  await cfApi(env, 'POST', script + '/subdomain', { enabled: on, previews_enabled: false });
+  await cfApi(env, 'PUT', script + '/tags', tags.filter((t) => t !== OFF_TAG).concat(on ? [] : [OFF_TAG]));
+}
+async function switchTunnel(t, on) {
+  const res = await fetch(t.url + '/.cloudfact/power', {
+    method: on === undefined ? 'GET' : 'POST',
+    headers: { authorization: 'Bearer ' + t.key, 'content-type': 'application/json' },
+    body: on === undefined ? undefined : JSON.stringify({ on }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error('the tunnel answered HTTP ' + res.status);
+  return (await res.json()).on !== false;
+}
+async function control(request, env, url) {
+  if (env.CLOUDFACT_CONTROL !== '1' || !env.CLOUDFACT_ACCOUNT_ID || !env.CLOUDFACT_API_TOKEN) return answer(404, { error: 'not_enabled' });
+  const origin = request.headers.get('origin');
+  if (request.headers.get('x-cloudfact') !== '1' || (origin && origin !== url.origin)) return answer(403, { error: 'forbidden' });
+  const targets = controlTargets(env);
+  try {
+    if (url.pathname === '/.cloudfact/state' && request.method === 'GET') {
+      const deploys = {};
+      if (targets.workers.length)
+        for (const s of await cfApi(env, 'GET', '/workers/scripts'))
+          if (targets.workers.includes(s.id)) deploys[s.id] = { on: !(s.tags || []).includes(OFF_TAG) };
+      await Promise.all(
+        Object.entries(targets.tunnels).map(async ([name, t]) => {
+          try {
+            deploys[name] = { on: await switchTunnel(t) };
+          } catch {
+            deploys[name] = { error: 'unreachable' };
+          }
+        }),
+      );
+      return answer(200, { deploys });
+    }
+    if (url.pathname === '/.cloudfact/power' && request.method === 'POST') {
+      let body = null;
+      try {
+        body = await request.json();
+      } catch {}
+      const name = body && body.name;
+      const on = body && body.on;
+      if (typeof name !== 'string' || typeof on !== 'boolean') return answer(400, { error: 'bad_request' });
+      if (Object.prototype.hasOwnProperty.call(targets.tunnels, name)) return answer(200, { name, on: await switchTunnel(targets.tunnels[name], on) });
+      if (targets.workers.includes(name)) {
+        await switchWorker(env, name, on);
+        return answer(200, { name, on });
+      }
+      return answer(404, { error: 'unknown', message: 'this page cannot switch ' + name });
+    }
+  } catch (e) {
+    return answer(502, { error: 'failed', message: String((e && e.message) || e) });
+  }
+  return answer(404, { error: 'not_found' });
+}
+`;
 
 // src/backends/workers/gate-worker.ts
 var WORKER_SOURCE = `// generated by cloudfact \u2014 gate worker
@@ -7573,7 +7678,7 @@ function cookieValue(request) {
 }
 const reply = (status, body, headers) =>
   new Response(body, { status, headers: { 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', ...headers } });
-
+${CONTROL_JS}
 // --- Cloudflare Access JWT verification (RS256 against the team's JWKS, cached in the isolate) ---
 let certsCache = { team: null, keys: null, at: 0 };
 async function accessKeys(team, force) {
@@ -7649,6 +7754,8 @@ export default {
         ok = false;
       }
       if (!ok) return reply(403, 'cloudfact: this site is protected by Cloudflare Access and the request carried no valid Access token for it. Sign in at https://' + new URL(request.url).host + '/ (if you just signed in, the Access application may still be propagating; retry in a minute).', { 'content-type': 'text/plain' });
+      const url = new URL(request.url);
+      if (url.pathname.startsWith('/.cloudfact/')) return control(request, env, url);
       const res = await env.ASSETS.fetch(request);
       const out = new Response(res.body, res);
       out.headers.set('cache-control', 'private, no-cache');
@@ -7843,6 +7950,7 @@ var PROJECT_TAG = "cloudfact:project:";
 var VIS_TAG = "cloudfact:vis:";
 var CATALOG_TAG = "cloudfact:catalog";
 var KIND_TAG = "cloudfact:kind:";
+var OFF_TAG = "cloudfact:off";
 function projectTag(project) {
   return PROJECT_TAG + slugProject(project);
 }
@@ -7855,6 +7963,7 @@ function tagsFor(opts = {}) {
   if (opts.visibility) tags.push(VIS_TAG + opts.visibility);
   if (opts.kind) tags.push(KIND_TAG + opts.kind);
   if (opts.catalog) tags.push(CATALOG_TAG);
+  if (opts.off) tags.push(OFF_TAG);
   return tags;
 }
 var tagValue = (tags, prefix) => (tags ?? []).find((t) => t.startsWith(prefix))?.slice(prefix.length) || null;
@@ -7917,6 +8026,7 @@ async function catalog(opts = {}) {
   }
   const local = new Map(listDeploys().map((s) => [s.name, s]));
   const accountNames = new Set(scripts.map((s) => s.id));
+  const offInAccount = new Set(scripts.filter((s) => (s.tags ?? []).includes(OFF_TAG)).map((s) => s.id));
   const entries = [];
   for (const s of scripts) {
     if (!(s.tags ?? []).includes(TAG)) continue;
@@ -7937,7 +8047,8 @@ async function catalog(opts = {}) {
       createdAt: s.created_on ?? null,
       modifiedAt: s.modified_on ?? null,
       backend: state?.backend ?? "workers",
-      status: state?.status ?? "deployed"
+      status: state?.status ?? "deployed",
+      off: offInAccount.has(s.id)
     });
   }
   for (const s of local.values()) {
@@ -7956,7 +8067,9 @@ async function catalog(opts = {}) {
       createdAt: s.startedAt ?? null,
       modifiedAt: s.urlAt ?? s.startedAt ?? null,
       backend: "tunnel",
-      status: s.status
+      status: s.status,
+      // behind an Access proxy the public address is the Worker's, and that is what gets switched off
+      off: Boolean(s.off) || offInAccount.has(s.name)
     });
   }
   if (opts.scanLocal !== false) {
@@ -7982,6 +8095,7 @@ async function catalog(opts = {}) {
         modifiedAt: null,
         backend: "tunnel",
         status: "running",
+        off: false,
         untracked: true
       });
     }
@@ -8029,15 +8143,26 @@ async function setProject(name, project, fetchImpl) {
     b.token,
     "PUT",
     `/accounts/${b.accountId}/workers/scripts/${encodeURIComponent(name)}/tags`,
-    tagsFor({ project, visibility: current.visibility, kind: current.kind }),
+    tagsFor({ project, visibility: current.visibility, kind: current.kind, off: current.off }),
     fetchImpl
   );
   const found = (await catalog({ fetchImpl })).projects.flatMap((p) => p.deploys).find((d) => d.name === name);
   if (!found) throw new Error(`deploy "${name}" is not in the account catalog`);
   return found;
 }
+async function switchWorker(name, on, opts = {}) {
+  const b = bearer();
+  if (!b) throw new Error("not signed in to Cloudflare: run `cloudfact login --device` or `cloudfact login --token <token>`");
+  if (!b.accountId) throw new Error("Cloudflare account id unknown; run `cloudfact login` again (it discovers the account)");
+  const script = `/accounts/${b.accountId}/workers/scripts/${encodeURIComponent(name)}`;
+  const tags = await api(b.token, "GET", `${script}/tags`, void 0, opts.fetchImpl) ?? [];
+  if (!tags.includes(TAG) && !opts.known) throw new Error(`"${name}" is a Worker in this account but not a cloudfact; leaving it alone`);
+  await api(b.token, "POST", `${script}/subdomain`, { enabled: on, previews_enabled: false }, opts.fetchImpl);
+  await api(b.token, "PUT", `${script}/tags`, [...tags.filter((t) => t !== OFF_TAG), ...on ? [] : [OFF_TAG]], opts.fetchImpl);
+}
 
 // src/backends/workers/index.ts
+var CONTROL_SECRETS = ["CLOUDFACT_API_TOKEN", "CLOUDFACT_CONTROL_TARGETS"];
 function stageDir(src, dst) {
   fs6.rmSync(dst, { recursive: true, force: true });
   fs6.mkdirSync(dst, { recursive: true });
@@ -8098,6 +8223,21 @@ async function deployWorkers(t) {
   let r;
   let access = null;
   const accessCtx = t.access?.length ? accessContext(cfg) : null;
+  const control = accessCtx ? t.control ?? null : null;
+  const deployAccessWorker = (app) => {
+    const workerDir = path5.join(dir, "worker");
+    const args = ["deploy", "--config", path5.join(workerDir, "wrangler.jsonc"), ...accessVars(app)];
+    if (!control) return runWrangler(args, { cfg, creds, cwd: workerDir, logFile });
+    const secrets = path5.join(workerDir, ".control-secrets.json");
+    const values = { CLOUDFACT_API_TOKEN: control.token, CLOUDFACT_CONTROL_TARGETS: JSON.stringify(control.targets) };
+    fs6.writeFileSync(secrets, JSON.stringify(values), { mode: 384 });
+    try {
+      const vars = ["--var", "CLOUDFACT_CONTROL:1", "--var", `CLOUDFACT_ACCOUNT_ID:${control.accountId}`];
+      return runWrangler([...args, ...vars, "--secrets-file", secrets], { cfg, creds, cwd: workerDir, logFile });
+    } finally {
+      fs6.rmSync(secrets, { force: true });
+    }
+  };
   if (accessCtx) {
     const domain = `${t.name}.${await workersSubdomain(accessCtx)}.workers.dev`;
     access = await upsertAccessApp(accessCtx, { name: t.name, domain, emails: t.access });
@@ -8105,12 +8245,7 @@ async function deployWorkers(t) {
     fs6.mkdirSync(workerDir, { recursive: true, mode: 448 });
     fs6.writeFileSync(path5.join(workerDir, "index.js"), WORKER_SOURCE);
     fs6.writeFileSync(path5.join(workerDir, "wrangler.jsonc"), wranglerConfig(t.name, compatibilityDate));
-    r = runWrangler(["deploy", "--config", path5.join(workerDir, "wrangler.jsonc"), ...accessVars(access)], {
-      cfg,
-      creds,
-      cwd: workerDir,
-      logFile
-    });
+    r = deployAccessWorker(access);
   } else if (t.private) {
     const workerDir = path5.join(dir, "worker");
     fs6.mkdirSync(workerDir, { recursive: true, mode: 448 });
@@ -8138,19 +8273,18 @@ ${r.text.slice(-1500)}`);
   }
   const url = (r.text.match(/https:\/\/[a-z0-9.-]+\.workers\.dev/g) ?? []).find((u) => u.includes(`//${t.name}.`)) ?? null;
   if (accessCtx && access && url && new URL(url).host !== access.domain) {
-    const workerDir = path5.join(dir, "worker");
     access = await upsertAccessApp(accessCtx, { name: t.name, domain: new URL(url).host, emails: t.access });
-    const again = runWrangler(["deploy", "--config", path5.join(workerDir, "wrangler.jsonc"), ...accessVars(access)], {
-      cfg,
-      creds,
-      cwd: workerDir,
-      logFile
-    });
+    const again = deployAccessWorker(access);
     if (again.status !== 0) {
       writeState(t.name, { ...readState(t.name), status: "error", error: again.text.slice(-1500) });
       throw new Error(`wrangler deploy failed:
 ${again.text.slice(-1500)}`);
     }
+  }
+  let controlLeft = Boolean(control);
+  if (!control && prev?.control) {
+    const nulls = Object.fromEntries(CONTROL_SECRETS.map((k) => [k, null]));
+    controlLeft = runWrangler(["secret", "bulk", "--name", t.name], { cfg, creds, cwd, logFile, input: JSON.stringify(nulls) }).status !== 0;
   }
   try {
     await tagWorker(t.name, {
@@ -8172,6 +8306,7 @@ ${again.text.slice(-1500)}`);
     project: t.project ?? null,
     versionId,
     deployedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    control: controlLeft,
     error: null
   };
   writeState(t.name, state);
@@ -8273,9 +8408,26 @@ h2{font-size:12.5px;font-weight:500;text-transform:uppercase;letter-spacing:.07e
 .sub svg{flex:none}
 .tag{background:#1f1f1f;border:1px solid #2a2a2a;border-radius:6px;padding:2px 8px;font-size:11.5px;color:#9a9a9a}
 .card a{color:inherit;text-decoration:none}
-.actions{display:flex;gap:7px;margin-top:10px}
+.actions{display:flex;align-items:center;gap:7px;margin-top:10px}
 .mini{background:#1c1c1c;border:1px solid #2c2c2c;color:#b4b4b4;border-radius:6px;padding:3px 9px;font:inherit;font-size:11.5px;cursor:pointer}
 .mini:hover{background:#242424;color:var(--ink)}
+.mini:disabled{opacity:.6;cursor:default}
+/* the on/off switch: only on a catalog behind sign-in, only for what this page can actually switch */
+.actions .switch{margin-left:auto}
+.power{background:none;border:1px solid transparent;color:#6a6a6a;border-radius:999px;padding:2px;cursor:pointer;line-height:0}
+.power:hover,.power:focus-visible{color:#f07575;background:#221414;border-color:#432424;outline:none}
+.card:not(.off) .only-off,.card.off .only-on,.card[data-switch="0"] .switch,body:not([data-control="1"]) .switch{display:none}
+.card.off .shot{filter:grayscale(1);opacity:.32}
+.card.off .title a{color:#8a8a8a}
+.pill.state-off{color:#e3a3a3;border-color:#3f2626;background:#1c1414}
+.confirm{margin-top:10px;padding:10px 11px;border:1px solid #3d2626;background:#1a1313;border-radius:9px;font-size:12px;line-height:1.45;color:#cdb9b9}
+.confirm[hidden],.power-msg[hidden]{display:none}
+.confirm div{display:flex;gap:7px;margin-top:9px}
+.mini[data-on]{color:#b9dcc4;border-color:#27402f;background:#141d17}
+.mini[data-on]:hover{background:#1a281f;color:#e3f5e8}
+.mini.danger{background:#3b1c1c;border-color:#5c2c2c;color:#ffc2c2}
+.mini.danger:hover{background:#4b2020;color:#fff}
+.power-msg{margin:8px 0 0;font-size:11.5px;color:#e79a9a}
 .creds{margin-top:9px;display:grid;gap:4px}
 .creds[hidden]{display:none}
 .creds div{display:flex;gap:8px;align-items:center;font-size:12px}
@@ -8289,6 +8441,8 @@ body.list .shot{display:none}
 body.list .card{flex-direction:row;align-items:center;padding:11px 15px}
 body.list .meta{padding:0;display:flex;align-items:center;gap:14px;width:100%}
 body.list .title{margin:0;min-width:220px}
+body.list .actions{margin:0 0 0 auto}
+body.list .confirm{margin:0}
 footer{color:#5f5f5f;font-size:12px;padding:0 28px 32px}
 `;
 var ICON = {
@@ -8297,7 +8451,9 @@ var ICON = {
   public: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/></svg>',
   static: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>',
   app: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>',
-  "app-login": '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="8" cy="12" r="4"/><path d="M12 12h9M18 12v4M15 12v3"/></svg>'
+  "app-login": '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="8" cy="12" r="4"/><path d="M12 12h9M18 12v4M15 12v3"/></svg>',
+  off: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 3v8"/><path d="M6.3 7.2a8 8 0 1 0 11.4 0"/></svg>',
+  turnOff: '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.2l5.6 5.6M14.8 9.2l-5.6 5.6"/></svg>'
 };
 var VIS_LABEL = { public: "Public", private: "Private link", access: "Sign-in", "app-login": "App login" };
 var KIND_LABEL = { static: "Static", app: "Server app" };
@@ -8335,6 +8491,78 @@ document.addEventListener('click', (e) => {
     show.textContent = box.hidden ? 'Show login' : 'Hide login';
   }
 });
+// on/off: the page asks its own Worker, which alone holds what it takes to switch each deploy
+const setOff = (card, off) => {
+  card.classList.toggle('off', off);
+  card.dataset.search = card.dataset.search.replace(/ off$/, '') + (off ? ' off' : '');
+};
+const say = (card, text) => {
+  const msg = card.querySelector('.power-msg');
+  msg.textContent = text;
+  msg.hidden = !text;
+};
+const closeConfirms = (except) => {
+  for (const box of document.querySelectorAll('.confirm:not([hidden])')) if (box !== except) box.hidden = true;
+};
+document.addEventListener('click', async (e) => {
+  const ask = e.target.closest('[data-off]');
+  const yes = e.target.closest('[data-off-yes]');
+  const no = e.target.closest('[data-off-no]');
+  const on = e.target.closest('[data-on]');
+  if (!ask && !yes && !no && !on) return;
+  const card = e.target.closest('.card');
+  const box = card.querySelector('.confirm');
+  say(card, '');
+  if (ask) {
+    closeConfirms(box);
+    box.hidden = !box.hidden;
+    if (!box.hidden) box.querySelector('[data-off-yes]').focus();
+    return;
+  }
+  if (no) {
+    box.hidden = true;
+    card.querySelector('[data-off]').focus();
+    return;
+  }
+  const button = yes || on;
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = on ? 'Turning on\u2026' : 'Turning off\u2026';
+  try {
+    const res = await fetch('/.cloudfact/power', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-cloudfact': '1' },
+      body: JSON.stringify({ name: card.dataset.name, on: Boolean(on) }),
+    });
+    let data = {};
+    try { data = await res.json(); } catch {}
+    if (!res.ok) throw new Error(data.message || 'the switch answered HTTP ' + res.status);
+    setOff(card, data.on === false);
+    box.hidden = true;
+    card.querySelector(data.on === false ? '[data-on]' : '[data-off]').focus();
+  } catch (err) {
+    say(card, 'Could not turn it ' + (on ? 'on' : 'off') + ': ' + err.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+});
+addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeConfirms(null);
+});
+// the page is a snapshot: ask for the live position of every switch
+if (document.body.dataset.control === '1')
+  fetch('/.cloudfact/state', { headers: { 'x-cloudfact': '1' } })
+    .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
+    .then(({ deploys }) => {
+      for (const card of document.querySelectorAll('.card[data-switch]')) {
+        const st = deploys[card.dataset.name];
+        if (!st) continue;
+        if (st.error) card.dataset.switch = '0'; // not reachable from here right now: nothing to offer
+        else setOff(card, !st.on);
+      }
+    })
+    .catch(() => (document.body.dataset.control = '0'));
 const search = document.getElementById('q');
 const apply = () => {
   const q = search.value.trim().toLowerCase();
@@ -8375,18 +8603,24 @@ function galleryHtml(c, opts = {}) {
     const snap = opts.snapshots?.[d.name];
     const preview = snap ? `<iframe srcdoc="${esc(snap)}" loading="lazy" tabindex="-1" sandbox="" title=""></iframe>` : `<div class="fallback"><div class="mono">${esc(d.name.slice(0, 2))}</div><div class="why">${d.visibility === "access" ? "sign-in required" : d.visibility === "private" ? "private link" : d.visibility === "app-login" ? "this app asks for its own login" : "no preview"}</div></div>`;
     const badge = d.untracked ? '<span class="tag">no local record</span>' : d.inAccount ? "" : '<span class="tag">local tunnel</span>';
-    const search = [d.name, d.project ?? "", d.url ?? "", VIS_LABEL[d.visibility], KIND_LABEL[d.kind]].join(" ").toLowerCase();
+    const search = [d.name, d.project ?? "", d.url ?? "", VIS_LABEL[d.visibility], KIND_LABEL[d.kind]].join(" ").toLowerCase() + (d.off ? " off" : "");
     const open = d.openUrl ?? d.url ?? "";
     const creds = d.creds ? `<div class="creds" hidden>${[
       d.creds.user ? `<div><span>user</span><code data-copy="${esc(d.creds.user)}">${esc(d.creds.user)}</code></div>` : "",
       d.creds.password ? `<div><span>pass</span><code data-copy="${esc(d.creds.password)}">${esc(d.creds.password)}</code></div>` : "",
       d.creds.note ? `<div><span>note</span><code>${esc(d.creds.note)}</code></div>` : ""
     ].join("")}</div>` : "";
+    const switchable = Boolean(opts.control && d.switchable);
     const actions = `<div class="actions">
       ${open ? `<button class="mini" data-copy="${esc(open)}">Copy link</button>` : ""}
       ${d.creds ? '<button class="mini" data-creds>Show login</button>' : ""}
+      ${switchable ? `<button class="mini switch only-off" data-on>Turn on</button>
+      <button class="power switch only-on" data-off title="Turn off" aria-label="Turn off ${esc(d.name)}">${ICON.turnOff}</button>` : ""}
     </div>`;
-    return `<div class="card" data-project="${esc(d.project ?? "")}" data-vis="${esc(d.visibility)}" data-kind="${esc(d.kind)}" data-search="${esc(search)}">
+    const confirm = switchable ? `<div class="confirm" hidden>Turn it off? Its link stops answering until you turn it back on. Nothing is deleted.
+      <div><button class="mini danger" data-off-yes>Turn off</button><button class="mini" data-off-no>Cancel</button></div></div>
+    <p class="power-msg" hidden></p>` : "";
+    return `<div class="card${d.off ? " off" : ""}" data-name="${esc(d.name)}"${switchable ? ' data-switch="1"' : ""} data-project="${esc(d.project ?? "")}" data-vis="${esc(d.visibility)}" data-kind="${esc(d.kind)}" data-search="${esc(search)}">
   <a class="open" href="${esc(open) || "#"}" target="_blank" rel="noopener">
   <div class="shot">${preview}</div>
   </a>
@@ -8397,8 +8631,9 @@ function galleryHtml(c, opts = {}) {
       <span class="pill">${ICON[d.kind]}${KIND_LABEL[d.kind]}</span>
       ${badge}
     </div>
-    <div class="sub when"><span data-at="${esc(d.modifiedAt ?? "")}">${d.modifiedAt ? "" : esc(d.status === "running" ? "Live now" : "No date")}</span></div>
+    <div class="sub when"><span class="pill state-off only-off">${ICON.off}Off</span><span data-at="${esc(d.modifiedAt ?? "")}">${d.modifiedAt ? "" : esc(d.status === "running" ? "Live now" : "No date")}</span></div>
     ${actions}
+    ${confirm}
     ${creds}
     ${d.visibility === "app-login" && !d.creds ? '<p class="hintline">Its own login. Record it with <code>cloudfact creds</code> to keep it here.</p>' : ""}
   </div>
@@ -8407,7 +8642,7 @@ function galleryHtml(c, opts = {}) {
   const sections = c.projects.map(
     (p) => `<section>
   <h2>${esc(p.project ?? "No project")}</h2>
-  <div class="grid">${p.deploys.map(card).join("\n")}</div>
+  <div class="grid">${[...p.deploys].sort((a, b) => Number(a.off) - Number(b.off)).map(card).join("\n")}</div>
 </section>`
   ).join("\n");
   return `<!doctype html>
@@ -8417,7 +8652,7 @@ function galleryHtml(c, opts = {}) {
 <link rel="icon" href="./favicon.png" sizes="any">
 <title>${esc(title)}</title>
 <style>${STYLE}</style>
-</head><body>
+</head><body${opts.control ? ' data-control="1"' : ""}>
 <header>
   <div class="brand">
     <img src="./symbol.png" alt="" width="26" height="26">
@@ -8805,6 +9040,21 @@ function withLocalSecrets(c, states, gated) {
     }
   return c;
 }
+function withControl(c, states, self) {
+  const targets = { workers: [], tunnels: {} };
+  for (const d of c.projects.flatMap((p) => p.deploys)) {
+    if (d.name === self || d.untracked) continue;
+    const s = states.get(d.name);
+    if (d.inAccount) {
+      targets.workers.push(d.name);
+      d.switchable = true;
+    } else if (s?.backend === "tunnel" && s.controlKey && isLive(s) && s.url) {
+      targets.tunnels[d.name] = { url: s.url, key: s.controlKey };
+      d.switchable = true;
+    }
+  }
+  return targets;
+}
 function setCredentials(name, creds) {
   const s = readState(name);
   if (!s) throw new Error(`deploy "${name}" does not exist`);
@@ -8844,7 +9094,10 @@ async function publishCatalog(opts = {}) {
   const c = await catalog();
   const access = opts.access ?? (opts.public ? void 0 : await accountEmail() ?? void 0);
   const states = new Map(listDeploys().map((s) => [s.name, s]));
+  const name = slug(opts.name ?? readConfig().catalogDeploy ?? "cloudfacts");
   withLocalSecrets(c, states, Boolean(access));
+  const token = credentials()?.token;
+  const control = access && token ? { accountId: c.accountId, token, targets: withControl(c, states, name) } : null;
   const shots = await snapshots(
     c.projects.flatMap((p) => p.deploys).map((d) => ({ name: d.name, url: d.url, visibility: d.visibility })),
     states
@@ -8853,15 +9106,19 @@ async function publishCatalog(opts = {}) {
   fs9.mkdirSync(dir, { recursive: true, mode: 448 });
   for (const file of fs9.existsSync(BRAND_DIR) ? fs9.readdirSync(BRAND_DIR) : [])
     fs9.copyFileSync(path9.join(BRAND_DIR, file), path9.join(dir, file));
-  fs9.writeFileSync(path9.join(dir, "index.html"), galleryHtml(c, { title: opts.title, snapshots: shots }));
-  const name = opts.name ?? readConfig().catalogDeploy ?? "cloudfacts";
-  const result = await deploy({
-    path: dir,
+  fs9.writeFileSync(path9.join(dir, "index.html"), galleryHtml(c, { title: opts.title, snapshots: shots, control: Boolean(control) }));
+  const priv = !opts.public;
+  const result = await deployWorkers({
     name,
+    mode: "dir",
+    root: dir,
+    file: null,
+    private: priv,
+    key: priv ? newKey() : null,
+    keyExpiresAt: null,
+    access: access ? [access].flat() : null,
     project: opts.project ?? "cloudfact",
-    access: access ? [access].flat() : void 0,
-    public: opts.public,
-    backend: "workers"
+    control
   });
   writeConfig({ ...readConfig(), catalogDeploy: result.name });
   await tagWorker(result.name, {
@@ -8901,6 +9158,45 @@ async function stopAll() {
   const out = [];
   for (const s of listDeploys()) if (s.backend === "tunnel" && s.status !== "stopped") out.push(await stop(s.name));
   return out;
+}
+async function power(name, on) {
+  const s = effectiveState(name);
+  if (!s && !bearer()) throw new Error(`deploy "${name}" does not exist`);
+  let result = { name, on };
+  if (s?.backend === "tunnel" && !s.access) result = await powerTunnel(s, on);
+  else await switchWorker(name, on, { known: Boolean(s) });
+  await refreshCatalogPage(name);
+  return result;
+}
+async function powerTunnel(s, on) {
+  const { name, mode } = s;
+  if (!isLive(s)) {
+    patchState(name, { off: !on });
+    return {
+      name,
+      on,
+      note: on ? `not running: start it again with \`cloudfact ${mode === "proxy" ? "expose" : "deploy"}\`` : "not running"
+    };
+  }
+  if (!s.controlKey)
+    throw new Error(
+      `"${name}" was started by an older cloudfact, which has no off switch: \`cloudfact stop ${name}\` ends it, and deploying it again with --restart gives it one (and a new link)`
+    );
+  const local = s.local ?? (s.port ? `http://127.0.0.1:${s.port}` : null);
+  if (local) {
+    try {
+      const res = await fetch(`${local}${POWER_PATH}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${s.controlKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ on }),
+        signal: AbortSignal.timeout(4e3)
+      });
+      if (res.ok) return { name, on: (await res.json()).on };
+    } catch {
+    }
+  }
+  patchState(name, { off: !on });
+  return { name, on };
 }
 async function remove(name) {
   const s = readState(name);
@@ -23144,6 +23440,16 @@ var stopTool = defineTool({
     return stop(name);
   }
 });
+var powerTool = defineTool({
+  name: "power",
+  description: 'Turn a cloudfact off, or back on. Off: its link stops answering (a Workers deploy loses its workers.dev address; a tunnel answers with a "this page is off" page) but nothing is deleted, so on=true brings the very same link back, with the same key and sign-in. Deploying it again also turns it on. Prefer this over remove when the user wants something "off" or "down" rather than gone. The catalog page behind sign-in has the same switch on every card.',
+  annotations: { title: "Turn off or on", readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  schema: {
+    name: external_exports.string().describe("Deploy name"),
+    on: external_exports.boolean().describe("false turns it off, true turns it back on")
+  },
+  handler: ({ name, on }) => power(name, on)
+});
 var removeTool = defineTool({
   name: "remove",
   description: "Stop (if running) and delete the deploy record and logs. On the workers backend, also deletes the worker on Cloudflare.",
@@ -23225,6 +23531,7 @@ var tools = [
   credentialsTool,
   statusTool,
   rotateTool,
+  powerTool,
   stopTool,
   removeTool,
   logsTool,
@@ -23281,6 +23588,7 @@ export {
   loginWithDevice,
   loginWithToken,
   logout,
+  power,
   publishCatalog,
   readLogs,
   refreshCatalogPage,
@@ -23295,5 +23603,6 @@ export {
   stopAll,
   summarize,
   tools,
+  withControl,
   withLocalSecrets
 };

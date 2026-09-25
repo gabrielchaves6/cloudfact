@@ -142,6 +142,39 @@ a catalog page that is itself gated. A catalog published with `--public` carries
 Cloudflare Access sign-in by default, for the email that owns the account; pass `--access` to choose who
 else gets in, or `--public` to opt out. MCP tools: `catalog`, `project`.
 
+## Turn a cloudfact off (and back on)
+
+Off means the link answers nothing, and that is all it means: the files, the address, the key and the
+sign-in stay where they are, so turning it back on brings the very same link back.
+
+```
+cloudfact off painel      # the link stops answering
+cloudfact on painel       # the same link works again
+```
+
+A Workers deploy loses its `workers.dev` address while off (its preview URLs too), and carries a
+`cloudfact:off` tag so the catalog can tell from any machine. A tunnel keeps its hostname and answers
+every request with a short "this page is off" page, WebSockets included, so its random
+`trycloudflare.com` address survives the pause. Deploying it again also turns it on. `stop` and `rm`
+are still there when you want the local process ended or the deploy gone. MCP tool: `power`.
+
+**From the catalog page.** On a catalog behind sign-in, every card that can be switched has a ✕ in its
+corner: one click and a confirmation turn it off, and an off card shows `Off` and a **Turn on** button.
+The page reads the live position of every switch when it opens, so it stays right after a change made
+elsewhere. For that, the catalog's Worker holds your API token as an encrypted Worker secret, together
+with the list of what it may switch; it does nothing else with it:
+
+- It switches only the deploys on that list: the Workers in the account, and the tunnels this machine
+  serves (through their host, with a control key of their own, which is not the private key: whoever holds
+  a shared link can open a page, not turn it off). Never the catalog itself, never anything else.
+- It answers only behind Cloudflare Access, and only to a request from the page itself (a custom header
+  and the page's own origin), so another site cannot use your sign-in to switch anything.
+- A catalog published with `--public`, or behind a key link, gets neither the switch nor the token;
+  republishing a catalog without the switch removes both from its Worker.
+
+Tunnels started by a cloudfact older than this feature have no switch until they are started again
+(`--restart`); their cards simply have no ✕.
+
 ## Look
 
 The pages cloudfact generates carry the CloudFacts identity: the mark, CloudFacts Sans and an off-white
@@ -153,7 +186,7 @@ cloudfact only dresses the pages it makes.
 
 ## MCP
 
-Stdio server. Tools: `deploy`, `expose`, `list`, `status`, `rotate`, `stop`, `remove`, `logs`, `doctor` — see [docs/tools.md](docs/tools.md) (generated from the code). Prompt: `cloudfact`. Sign-in is deliberately outside the MCP: run `cloudfact login` in a terminal so the token never enters the agent context.
+Stdio server. Tools: `deploy`, `expose`, `list`, `catalog`, `project`, `credentials`, `status`, `rotate`, `power`, `stop`, `remove`, `logs`, `doctor` — see [docs/tools.md](docs/tools.md) (generated from the code). Prompt: `cloudfact`. Sign-in is deliberately outside the MCP: run `cloudfact login` in a terminal so the token never enters the agent context.
 
 Skill `/cloudfact <path> [--private] [--name x] [--tunnel|--workers]` lives in `skills/cloudfact/SKILL.md`; the Claude Code plugin ships it, and `install.sh` links it into `~/.codex/skills`.
 
@@ -163,6 +196,7 @@ Skill `/cloudfact <path> [--private] [--name x] [--tunnel|--workers]` lives in `
 cloudfact deploy [path] [--name n] [--public] [--expires 24h] [--backend auto|tunnel|workers] [--restart] [--json]
 cloudfact expose <port> [--name n] [--public] [--expires 24h] [--ssh user@host] [--ssh-port 22] [--identity key] [--strict-host-key] [--restart] [--json]
 cloudfact rotate <name> [--expires 24h]
+cloudfact off <name> | on <name>
 cloudfact list | status <name> | stop <name>|--all | rm <name> | logs <name> [-n 40]
 cloudfact doctor | setup | login --device | login --token T [--account-id ID] | logout
 cloudfact config get | set <key> <value>

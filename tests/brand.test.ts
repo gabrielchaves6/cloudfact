@@ -67,6 +67,7 @@ describe('a page that asks for its own login', () => {
               modifiedAt: null,
               backend: 'tunnel',
               status: 'running',
+              off: false,
               untracked: true,
             },
           ],

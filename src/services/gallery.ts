@@ -50,9 +50,26 @@ h2{font-size:12.5px;font-weight:500;text-transform:uppercase;letter-spacing:.07e
 .sub svg{flex:none}
 .tag{background:#1f1f1f;border:1px solid #2a2a2a;border-radius:6px;padding:2px 8px;font-size:11.5px;color:#9a9a9a}
 .card a{color:inherit;text-decoration:none}
-.actions{display:flex;gap:7px;margin-top:10px}
+.actions{display:flex;align-items:center;gap:7px;margin-top:10px}
 .mini{background:#1c1c1c;border:1px solid #2c2c2c;color:#b4b4b4;border-radius:6px;padding:3px 9px;font:inherit;font-size:11.5px;cursor:pointer}
 .mini:hover{background:#242424;color:var(--ink)}
+.mini:disabled{opacity:.6;cursor:default}
+/* the on/off switch: only on a catalog behind sign-in, only for what this page can actually switch */
+.actions .switch{margin-left:auto}
+.power{background:none;border:1px solid transparent;color:#6a6a6a;border-radius:999px;padding:2px;cursor:pointer;line-height:0}
+.power:hover,.power:focus-visible{color:#f07575;background:#221414;border-color:#432424;outline:none}
+.card:not(.off) .only-off,.card.off .only-on,.card[data-switch="0"] .switch,body:not([data-control="1"]) .switch{display:none}
+.card.off .shot{filter:grayscale(1);opacity:.32}
+.card.off .title a{color:#8a8a8a}
+.pill.state-off{color:#e3a3a3;border-color:#3f2626;background:#1c1414}
+.confirm{margin-top:10px;padding:10px 11px;border:1px solid #3d2626;background:#1a1313;border-radius:9px;font-size:12px;line-height:1.45;color:#cdb9b9}
+.confirm[hidden],.power-msg[hidden]{display:none}
+.confirm div{display:flex;gap:7px;margin-top:9px}
+.mini[data-on]{color:#b9dcc4;border-color:#27402f;background:#141d17}
+.mini[data-on]:hover{background:#1a281f;color:#e3f5e8}
+.mini.danger{background:#3b1c1c;border-color:#5c2c2c;color:#ffc2c2}
+.mini.danger:hover{background:#4b2020;color:#fff}
+.power-msg{margin:8px 0 0;font-size:11.5px;color:#e79a9a}
 .creds{margin-top:9px;display:grid;gap:4px}
 .creds[hidden]{display:none}
 .creds div{display:flex;gap:8px;align-items:center;font-size:12px}
@@ -66,6 +83,8 @@ body.list .shot{display:none}
 body.list .card{flex-direction:row;align-items:center;padding:11px 15px}
 body.list .meta{padding:0;display:flex;align-items:center;gap:14px;width:100%}
 body.list .title{margin:0;min-width:220px}
+body.list .actions{margin:0 0 0 auto}
+body.list .confirm{margin:0}
 footer{color:#5f5f5f;font-size:12px;padding:0 28px 32px}
 `;
 
@@ -81,6 +100,9 @@ const ICON = {
   app: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>',
   'app-login':
     '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="8" cy="12" r="4"/><path d="M12 12h9M18 12v4M15 12v3"/></svg>',
+  off: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 3v8"/><path d="M6.3 7.2a8 8 0 1 0 11.4 0"/></svg>',
+  turnOff:
+    '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.2l5.6 5.6M14.8 9.2l-5.6 5.6"/></svg>',
 };
 const VIS_LABEL = { public: 'Public', private: 'Private link', access: 'Sign-in', 'app-login': 'App login' };
 const KIND_LABEL = { static: 'Static', app: 'Server app' };
@@ -119,6 +141,78 @@ document.addEventListener('click', (e) => {
     show.textContent = box.hidden ? 'Show login' : 'Hide login';
   }
 });
+// on/off: the page asks its own Worker, which alone holds what it takes to switch each deploy
+const setOff = (card, off) => {
+  card.classList.toggle('off', off);
+  card.dataset.search = card.dataset.search.replace(/ off$/, '') + (off ? ' off' : '');
+};
+const say = (card, text) => {
+  const msg = card.querySelector('.power-msg');
+  msg.textContent = text;
+  msg.hidden = !text;
+};
+const closeConfirms = (except) => {
+  for (const box of document.querySelectorAll('.confirm:not([hidden])')) if (box !== except) box.hidden = true;
+};
+document.addEventListener('click', async (e) => {
+  const ask = e.target.closest('[data-off]');
+  const yes = e.target.closest('[data-off-yes]');
+  const no = e.target.closest('[data-off-no]');
+  const on = e.target.closest('[data-on]');
+  if (!ask && !yes && !no && !on) return;
+  const card = e.target.closest('.card');
+  const box = card.querySelector('.confirm');
+  say(card, '');
+  if (ask) {
+    closeConfirms(box);
+    box.hidden = !box.hidden;
+    if (!box.hidden) box.querySelector('[data-off-yes]').focus();
+    return;
+  }
+  if (no) {
+    box.hidden = true;
+    card.querySelector('[data-off]').focus();
+    return;
+  }
+  const button = yes || on;
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = on ? 'Turning on…' : 'Turning off…';
+  try {
+    const res = await fetch('/.cloudfact/power', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-cloudfact': '1' },
+      body: JSON.stringify({ name: card.dataset.name, on: Boolean(on) }),
+    });
+    let data = {};
+    try { data = await res.json(); } catch {}
+    if (!res.ok) throw new Error(data.message || 'the switch answered HTTP ' + res.status);
+    setOff(card, data.on === false);
+    box.hidden = true;
+    card.querySelector(data.on === false ? '[data-on]' : '[data-off]').focus();
+  } catch (err) {
+    say(card, 'Could not turn it ' + (on ? 'on' : 'off') + ': ' + err.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+});
+addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeConfirms(null);
+});
+// the page is a snapshot: ask for the live position of every switch
+if (document.body.dataset.control === '1')
+  fetch('/.cloudfact/state', { headers: { 'x-cloudfact': '1' } })
+    .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
+    .then(({ deploys }) => {
+      for (const card of document.querySelectorAll('.card[data-switch]')) {
+        const st = deploys[card.dataset.name];
+        if (!st) continue;
+        if (st.error) card.dataset.switch = '0'; // not reachable from here right now: nothing to offer
+        else setOff(card, !st.on);
+      }
+    })
+    .catch(() => (document.body.dataset.control = '0'));
 const search = document.getElementById('q');
 const apply = () => {
   const q = search.value.trim().toLowerCase();
@@ -155,7 +249,10 @@ const esc = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 /** Self-contained page: no build step, no network beyond the previews themselves. */
-export function galleryHtml(c: CatalogResult, opts: { title?: string; snapshots?: Record<string, string> } = {}): string {
+export function galleryHtml(
+  c: CatalogResult,
+  opts: { title?: string; snapshots?: Record<string, string>; control?: boolean } = {},
+): string {
   const title = opts.title ?? 'CloudFacts';
   const projects = c.projects.map((p) => p.project).filter((p): p is string => Boolean(p));
   const total = c.projects.reduce((n, p) => n + p.deploys.length, 0);
@@ -178,7 +275,8 @@ export function galleryHtml(c: CatalogResult, opts: { title?: string; snapshots?
                 : 'no preview'
         }</div></div>`;
     const badge = d.untracked ? '<span class="tag">no local record</span>' : d.inAccount ? '' : '<span class="tag">local tunnel</span>';
-    const search = [d.name, d.project ?? '', d.url ?? '', VIS_LABEL[d.visibility], KIND_LABEL[d.kind]].join(' ').toLowerCase();
+    const search =
+      [d.name, d.project ?? '', d.url ?? '', VIS_LABEL[d.visibility], KIND_LABEL[d.kind]].join(' ').toLowerCase() + (d.off ? ' off' : '');
     const open = d.openUrl ?? d.url ?? '';
     const creds = d.creds
       ? `<div class="creds" hidden>${[
@@ -187,11 +285,23 @@ export function galleryHtml(c: CatalogResult, opts: { title?: string; snapshots?
           d.creds.note ? `<div><span>note</span><code>${esc(d.creds.note)}</code></div>` : '',
         ].join('')}</div>`
       : '';
+    const switchable = Boolean(opts.control && d.switchable);
     const actions = `<div class="actions">
       ${open ? `<button class="mini" data-copy="${esc(open)}">Copy link</button>` : ''}
       ${d.creds ? '<button class="mini" data-creds>Show login</button>' : ''}
+      ${
+        switchable
+          ? `<button class="mini switch only-off" data-on>Turn on</button>
+      <button class="power switch only-on" data-off title="Turn off" aria-label="Turn off ${esc(d.name)}">${ICON.turnOff}</button>`
+          : ''
+      }
     </div>`;
-    return `<div class="card" data-project="${esc(d.project ?? '')}" data-vis="${esc(d.visibility)}" data-kind="${esc(d.kind)}" data-search="${esc(search)}">
+    const confirm = switchable
+      ? `<div class="confirm" hidden>Turn it off? Its link stops answering until you turn it back on. Nothing is deleted.
+      <div><button class="mini danger" data-off-yes>Turn off</button><button class="mini" data-off-no>Cancel</button></div></div>
+    <p class="power-msg" hidden></p>`
+      : '';
+    return `<div class="card${d.off ? ' off' : ''}" data-name="${esc(d.name)}"${switchable ? ' data-switch="1"' : ''} data-project="${esc(d.project ?? '')}" data-vis="${esc(d.visibility)}" data-kind="${esc(d.kind)}" data-search="${esc(search)}">
   <a class="open" href="${esc(open) || '#'}" target="_blank" rel="noopener">
   <div class="shot">${preview}</div>
   </a>
@@ -202,8 +312,9 @@ export function galleryHtml(c: CatalogResult, opts: { title?: string; snapshots?
       <span class="pill">${ICON[d.kind]}${KIND_LABEL[d.kind]}</span>
       ${badge}
     </div>
-    <div class="sub when"><span data-at="${esc(d.modifiedAt ?? '')}">${d.modifiedAt ? '' : esc(d.status === 'running' ? 'Live now' : 'No date')}</span></div>
+    <div class="sub when"><span class="pill state-off only-off">${ICON.off}Off</span><span data-at="${esc(d.modifiedAt ?? '')}">${d.modifiedAt ? '' : esc(d.status === 'running' ? 'Live now' : 'No date')}</span></div>
     ${actions}
+    ${confirm}
     ${creds}
     ${d.visibility === 'app-login' && !d.creds ? '<p class="hintline">Its own login. Record it with <code>cloudfact creds</code> to keep it here.</p>' : ''}
   </div>
@@ -214,7 +325,10 @@ export function galleryHtml(c: CatalogResult, opts: { title?: string; snapshots?
     .map(
       (p) => `<section>
   <h2>${esc(p.project ?? 'No project')}</h2>
-  <div class="grid">${p.deploys.map(card).join('\n')}</div>
+  <div class="grid">${[...p.deploys]
+    .sort((a, b) => Number(a.off) - Number(b.off)) // what is off goes last, in the same order as before
+    .map(card)
+    .join('\n')}</div>
 </section>`,
     )
     .join('\n');
@@ -226,7 +340,7 @@ export function galleryHtml(c: CatalogResult, opts: { title?: string; snapshots?
 <link rel="icon" href="./favicon.png" sizes="any">
 <title>${esc(title)}</title>
 <style>${STYLE}</style>
-</head><body>
+</head><body${opts.control ? ' data-control="1"' : ''}>
 <header>
   <div class="brand">
     <img src="./symbol.png" alt="" width="26" height="26">

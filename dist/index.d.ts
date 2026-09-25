@@ -27,6 +27,10 @@ interface DeployState {
     key?: string | null;
     /** ISO date after which the private key stops working (null = never). */
     keyExpiresAt?: string | null;
+    /** Turned off: the link stays reserved but answers nothing until the deploy is turned back on. */
+    off?: boolean;
+    /** Secret for the tunnel host's on/off switch. Never part of a link; never returned (see summarize()). */
+    controlKey?: string | null;
     error?: string | null;
     hostPid?: number | null;
     tunnelPid?: number | null;
@@ -62,9 +66,11 @@ interface DeployState {
     } | null;
     versionId?: string | null;
     deployedAt?: string;
+    /** Catalog page only: its Worker holds the secrets that let the page turn deploys off and on. */
+    control?: boolean;
 }
-/** State without the private key (privateUrl already carries it). */
-type DeploySummary = Omit<DeployState, 'key'>;
+/** State without the private key (privateUrl already carries it) and without the switch's key. */
+type DeploySummary = Omit<DeployState, 'key' | 'controlKey'>;
 interface SshTarget {
     /** user@host or host */
     destination: string;
@@ -126,6 +132,10 @@ interface CatalogEntry {
     modifiedAt: string | null;
     backend: Backend;
     status: DeployStatus;
+    /** Turned off: the link answers nothing until the deploy is turned back on. */
+    off: boolean;
+    /** The catalog page can turn this deploy off and on (a catalog behind sign-in only). */
+    switchable?: boolean;
     /** Link that opens the page already unlocked (carries the private key). Only for a gated catalog. */
     openUrl?: string | null;
     /** The app's own login, shown on a catalog page that is behind sign-in. */
@@ -153,6 +163,23 @@ interface Credentials {
     source: 'token' | 'wrangler';
     token: string | null;
     accountId: string | null;
+}
+/**
+ * What the catalog page's Worker may switch off and on: Workers in the account, by name, and tunnels
+ * served from this machine, through their host with the host's control key.
+ */
+interface ControlTargets {
+    workers: string[];
+    tunnels: Record<string, {
+        url: string;
+        key: string;
+    }>;
+}
+interface PowerResult {
+    name: string;
+    /** false = off: the link answers nothing, and nothing was deleted. */
+    on: boolean;
+    note?: string;
 }
 
 declare function listDeploys(): DeployState[];
@@ -235,6 +262,12 @@ declare function expose(opts: ExposeOptions): Promise<DeployResult>;
  */
 declare function withLocalSecrets(c: CatalogResult, states: Map<string, DeployState>, gated: boolean): CatalogResult;
 /**
+ * Marks what the catalog page may turn off and on, and returns the list its Worker receives: the Workers
+ * in the account (never the page itself), and the tunnels this machine serves through a host that has
+ * the switch. A page found on this machine without a record of it is left alone.
+ */
+declare function withControl(c: CatalogResult, states: Map<string, DeployState>, self: string): ControlTargets;
+/**
  * Records how to get into the app behind a deploy (its own login, not cloudfact's). Stored with the
  * deploy on this machine and surfaced only on a catalog page that is itself behind sign-in.
  */
@@ -285,6 +318,13 @@ declare function stopAll(): Promise<{
     name: string;
     stopped: boolean;
 }[]>;
+/**
+ * Turns a cloudfact off, or back on. Off only means that its link answers nothing: the files, the address,
+ * the key and the sign-in all stay, so turning it on brings the very same link back. A Worker loses its
+ * workers.dev address while off; a tunnel keeps its hostname and answers with a "this page is off" page.
+ * Deploying it again also turns it back on.
+ */
+declare function power(name: string, on: boolean): Promise<PowerResult>;
 declare function remove(name: string): Promise<{
     name: string;
     removed: true;
@@ -349,4 +389,4 @@ interface ToolDefinition<Schema extends ZodRawShape = ZodRawShape> {
 
 declare const tools: ToolDefinition<any>[];
 
-export { type Backend, type BackendChoice, type CatalogEntry, type CatalogResult, type Credentials, type DeployKind, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type ExposeOptions, type SshTarget, type StatusResult, type ToolDefinition, VERSION, type Visibility, catalog, catalogHint, createServer, deploy, doctor, expose, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, publishCatalog, readLogs, refreshCatalogPage, remove, resolveBackend, rotate, setCredentials, setProject, setupCodex, status, stop, stopAll, summarize, tools, withLocalSecrets };
+export { type Backend, type BackendChoice, type CatalogEntry, type CatalogResult, type ControlTargets, type Credentials, type DeployKind, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type ExposeOptions, type PowerResult, type SshTarget, type StatusResult, type ToolDefinition, VERSION, type Visibility, catalog, catalogHint, createServer, deploy, doctor, expose, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, power, publishCatalog, readLogs, refreshCatalogPage, remove, resolveBackend, rotate, setCredentials, setProject, setupCodex, status, stop, stopAll, summarize, tools, withControl, withLocalSecrets };

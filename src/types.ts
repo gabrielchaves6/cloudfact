@@ -25,6 +25,10 @@ export interface DeployState {
   key?: string | null;
   /** ISO date after which the private key stops working (null = never). */
   keyExpiresAt?: string | null;
+  /** Turned off: the link stays reserved but answers nothing until the deploy is turned back on. */
+  off?: boolean;
+  /** Secret for the tunnel host's on/off switch. Never part of a link; never returned (see summarize()). */
+  controlKey?: string | null;
   error?: string | null;
   // tunnel
   hostPid?: number | null;
@@ -53,10 +57,12 @@ export interface DeployState {
   access?: { appId: string; aud: string; domain: string; emails: string[]; teamDomain: string } | null;
   versionId?: string | null;
   deployedAt?: string;
+  /** Catalog page only: its Worker holds the secrets that let the page turn deploys off and on. */
+  control?: boolean;
 }
 
-/** State without the private key (privateUrl already carries it). */
-export type DeploySummary = Omit<DeployState, 'key'>;
+/** State without the private key (privateUrl already carries it) and without the switch's key. */
+export type DeploySummary = Omit<DeployState, 'key' | 'controlKey'>;
 
 export interface SshTarget {
   /** user@host or host */
@@ -120,6 +126,10 @@ export interface CatalogEntry {
   modifiedAt: string | null;
   backend: Backend;
   status: DeployStatus;
+  /** Turned off: the link answers nothing until the deploy is turned back on. */
+  off: boolean;
+  /** The catalog page can turn this deploy off and on (a catalog behind sign-in only). */
+  switchable?: boolean;
   /** Link that opens the page already unlocked (carries the private key). Only for a gated catalog. */
   openUrl?: string | null;
   /** The app's own login, shown on a catalog page that is behind sign-in. */
@@ -142,4 +152,20 @@ export interface Credentials {
   source: 'token' | 'wrangler';
   token: string | null;
   accountId: string | null;
+}
+
+/**
+ * What the catalog page's Worker may switch off and on: Workers in the account, by name, and tunnels
+ * served from this machine, through their host with the host's control key.
+ */
+export interface ControlTargets {
+  workers: string[];
+  tunnels: Record<string, { url: string; key: string }>;
+}
+
+export interface PowerResult {
+  name: string;
+  /** false = off: the link answers nothing, and nothing was deleted. */
+  on: boolean;
+  note?: string;
 }

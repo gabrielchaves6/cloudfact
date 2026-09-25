@@ -5,9 +5,9 @@ import { readConfig } from '../../config.js';
 import { deployDir, readState, summarize, writeState } from '../../services/state.js';
 import { credentials, runWrangler } from '../../services/wrangler.js';
 import { WORKER_SOURCE, wranglerConfig } from './gate-worker.js';
-import { accessContext, accessVars, deleteAccessApp, upsertAccessApp, workersSubdomain } from '../../services/access.js';
+import { accessContext, accessVars, deleteAccessApp, upsertAccessApp, workersSubdomain, type AccessApp } from '../../services/access.js';
 import { tagWorker } from '../../services/catalog.js';
-import type { DeployMode, DeployResult } from '../../types.js';
+import type { ControlTargets, DeployMode, DeployResult } from '../../types.js';
 
 export interface WorkersTarget {
   name: string;
@@ -21,7 +21,15 @@ export interface WorkersTarget {
   access?: string[] | null;
   /** Project this deploy belongs to in the account catalog. */
   project?: string | null;
+  /**
+   * The catalog page's on/off switch (Access mode only): the Worker receives the API token and the list
+   * of deploys it may switch, as secrets. Without it, a switch left by an earlier publish is removed.
+   */
+  control?: { accountId: string; token: string; targets: ControlTargets } | null;
 }
+
+/** Secrets that make up the switch; dropped again when a catalog is republished without it. */
+const CONTROL_SECRETS = ['CLOUDFACT_API_TOKEN', 'CLOUDFACT_CONTROL_TARGETS'];
 
 /** Copies `src` into `dst` skipping dotfiles, node_modules and symlinks. Returns the file count. */
 export function stageDir(src: string, dst: string): number {
@@ -87,6 +95,24 @@ export async function deployWorkers(t: WorkersTarget): Promise<DeployResult> {
   let r;
   let access = null;
   const accessCtx = t.access?.length ? accessContext(cfg) : null; // validates the token before touching anything
+  // the switch only ever sits behind Access sign-in, never behind a key link or on an open page
+  const control = accessCtx ? (t.control ?? null) : null;
+  /** The gate Worker in Access mode; with the switch, its secrets ship with this very version. */
+  const deployAccessWorker = (app: AccessApp) => {
+    const workerDir = path.join(dir, 'worker');
+    const args = ['deploy', '--config', path.join(workerDir, 'wrangler.jsonc'), ...accessVars(app)];
+    if (!control) return runWrangler(args, { cfg, creds, cwd: workerDir, logFile });
+    // on disk only for the length of the deploy, inside the deploy's 0700 directory
+    const secrets = path.join(workerDir, '.control-secrets.json');
+    const values = { CLOUDFACT_API_TOKEN: control.token, CLOUDFACT_CONTROL_TARGETS: JSON.stringify(control.targets) };
+    fs.writeFileSync(secrets, JSON.stringify(values), { mode: 0o600 });
+    try {
+      const vars = ['--var', 'CLOUDFACT_CONTROL:1', '--var', `CLOUDFACT_ACCOUNT_ID:${control.accountId}`];
+      return runWrangler([...args, ...vars, '--secrets-file', secrets], { cfg, creds, cwd: workerDir, logFile });
+    } finally {
+      fs.rmSync(secrets, { force: true });
+    }
+  };
   if (accessCtx) {
     // The Access app (and its AUD) must exist before the Worker goes live: the gate Worker verifies the
     // Access JWT against that AUD. The hostname is predictable from the account's workers.dev subdomain.
@@ -96,12 +122,7 @@ export async function deployWorkers(t: WorkersTarget): Promise<DeployResult> {
     fs.mkdirSync(workerDir, { recursive: true, mode: 0o700 });
     fs.writeFileSync(path.join(workerDir, 'index.js'), WORKER_SOURCE);
     fs.writeFileSync(path.join(workerDir, 'wrangler.jsonc'), wranglerConfig(t.name, compatibilityDate));
-    r = runWrangler(['deploy', '--config', path.join(workerDir, 'wrangler.jsonc'), ...accessVars(access)], {
-      cfg,
-      creds,
-      cwd: workerDir,
-      logFile,
-    });
+    r = deployAccessWorker(access);
   } else if (t.private) {
     // gate worker in front of the assets (run_worker_first); key delivered as a secret after the deploy
     const workerDir = path.join(dir, 'worker');
@@ -129,18 +150,20 @@ export async function deployWorkers(t: WorkersTarget): Promise<DeployResult> {
   const url = (r.text.match(/https:\/\/[a-z0-9.-]+\.workers\.dev/g) ?? []).find((u) => u.includes(`//${t.name}.`)) ?? null;
   if (accessCtx && access && url && new URL(url).host !== access.domain) {
     // the subdomain changed under us: protect the real hostname and point the Worker at the new AUD
-    const workerDir = path.join(dir, 'worker');
     access = await upsertAccessApp(accessCtx, { name: t.name, domain: new URL(url).host, emails: t.access! });
-    const again = runWrangler(['deploy', '--config', path.join(workerDir, 'wrangler.jsonc'), ...accessVars(access)], {
-      cfg,
-      creds,
-      cwd: workerDir,
-      logFile,
-    });
+    const again = deployAccessWorker(access);
     if (again.status !== 0) {
       writeState(t.name, { ...readState(t.name)!, status: 'error', error: again.text.slice(-1500) });
       throw new Error(`wrangler deploy failed:\n${again.text.slice(-1500)}`);
     }
+  }
+  // republished without the switch: the API token must not stay behind in the Worker. When that fails,
+  // the state keeps saying so, and the next publish tries again.
+  let controlLeft = Boolean(control);
+  if (!control && prev?.control) {
+    const nulls = Object.fromEntries(CONTROL_SECRETS.map((k) => [k, null]));
+    controlLeft =
+      runWrangler(['secret', 'bulk', '--name', t.name], { cfg, creds, cwd, logFile, input: JSON.stringify(nulls) }).status !== 0;
   }
   // the account catalog is rebuilt from script tags, and a deploy resets them
   try {
@@ -164,6 +187,7 @@ export async function deployWorkers(t: WorkersTarget): Promise<DeployResult> {
     project: t.project ?? null,
     versionId,
     deployedAt: new Date().toISOString(),
+    control: controlLeft,
     error: null,
   };
   writeState(t.name, state);

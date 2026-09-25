@@ -102,6 +102,17 @@ _mutating_
 | `name` | string | yes | Deploy name |
 | `expires` | string | no | New key lifetime, e.g. "24h" (default: never) |
 
+## `power` — Turn off or on
+
+Turn a cloudfact off, or back on. Off: its link stops answering (a Workers deploy loses its workers.dev address; a tunnel answers with a "this page is off" page) but nothing is deleted, so on=true brings the very same link back, with the same key and sign-in. Deploying it again also turns it on. Prefer this over remove when the user wants something "off" or "down" rather than gone. The catalog page behind sign-in has the same switch on every card.
+
+_mutating, idempotent_
+
+| parameter | type | required | description |
+| --- | --- | --- | --- |
+| `name` | string | yes | Deploy name |
+| `on` | boolean | yes | false turns it off, true turns it back on |
+
 ## `stop` — Stop deploy
 
 Stop the local server and tunnel of one deploy (or all of them with all=true). The record is kept for inspection. Not applicable to the workers backend.

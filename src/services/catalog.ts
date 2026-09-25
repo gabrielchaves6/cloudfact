@@ -20,6 +20,8 @@ const VIS_TAG = 'cloudfact:vis:';
 /** The published catalog page marks itself, so any machine can find and refresh it. */
 export const CATALOG_TAG = 'cloudfact:catalog';
 const KIND_TAG = 'cloudfact:kind:';
+/** A Worker turned off: its workers.dev address is disabled, and the tag lets one listing tell. */
+export const OFF_TAG = 'cloudfact:off';
 
 export function projectTag(project: string): string {
   return PROJECT_TAG + slugProject(project);
@@ -45,13 +47,14 @@ export function slugProject(input: string): string {
  * key-gated link, or Cloudflare Access sign-in).
  */
 export function tagsFor(
-  opts: { project?: string | null; visibility?: Visibility | null; kind?: DeployKind | null; catalog?: boolean } = {},
+  opts: { project?: string | null; visibility?: Visibility | null; kind?: DeployKind | null; catalog?: boolean; off?: boolean } = {},
 ): string[] {
   const tags = [TAG];
   if (opts.project) tags.push(projectTag(opts.project));
   if (opts.visibility) tags.push(VIS_TAG + opts.visibility);
   if (opts.kind) tags.push(KIND_TAG + opts.kind);
   if (opts.catalog) tags.push(CATALOG_TAG);
+  if (opts.off) tags.push(OFF_TAG);
   return tags;
 }
 
@@ -164,6 +167,7 @@ export async function catalog(opts: { project?: string; fetchImpl?: typeof fetch
   // a deploy can be tunnel-backed here and still own a Worker in the account (an Access proxy in front
   // of the tunnel), so membership is decided by the account's script names, not by the tag alone
   const accountNames = new Set(scripts.map((s) => s.id));
+  const offInAccount = new Set(scripts.filter((s) => (s.tags ?? []).includes(OFF_TAG)).map((s) => s.id));
   const entries: CatalogEntry[] = [];
   for (const s of scripts) {
     if (!(s.tags ?? []).includes(TAG)) continue;
@@ -185,6 +189,7 @@ export async function catalog(opts: { project?: string; fetchImpl?: typeof fetch
       modifiedAt: s.modified_on ?? null,
       backend: state?.backend ?? 'workers',
       status: state?.status ?? 'deployed',
+      off: offInAccount.has(s.id),
     });
   }
   // tunnels live only on this machine; show them so the catalog is the whole picture, flagged as such
@@ -205,6 +210,8 @@ export async function catalog(opts: { project?: string; fetchImpl?: typeof fetch
       modifiedAt: s.urlAt ?? s.startedAt ?? null,
       backend: 'tunnel',
       status: s.status,
+      // behind an Access proxy the public address is the Worker's, and that is what gets switched off
+      off: Boolean(s.off) || offInAccount.has(s.name),
     });
   }
 
@@ -234,6 +241,7 @@ export async function catalog(opts: { project?: string; fetchImpl?: typeof fetch
         modifiedAt: null,
         backend: 'tunnel',
         status: 'running',
+        off: false,
         untracked: true,
       });
     }
@@ -291,10 +299,30 @@ export async function setProject(name: string, project: string | null, fetchImpl
     b.token,
     'PUT',
     `/accounts/${b.accountId}/workers/scripts/${encodeURIComponent(name)}/tags`,
-    tagsFor({ project, visibility: current.visibility, kind: current.kind }),
+    tagsFor({ project, visibility: current.visibility, kind: current.kind, off: current.off }),
     fetchImpl,
   );
   const found = (await catalog({ fetchImpl })).projects.flatMap((p) => p.deploys).find((d) => d.name === name);
   if (!found) throw new Error(`deploy "${name}" is not in the account catalog`);
   return found;
+}
+
+/**
+ * Turns a Worker's workers.dev address off, or back on. Nothing else changes (files, secrets, the Access
+ * app), so turning it on serves the same page at the same address. Preview URLs stay off both ways: they
+ * would otherwise keep serving the page while it is meant to be off.
+ *
+ * Only a cloudfact is switched: a Worker without the `cloudfact` tag is refused unless the caller knows it
+ * as one of its own deploys (`known`: an older deploy, from before the tags).
+ */
+export async function switchWorker(name: string, on: boolean, opts: { known?: boolean; fetchImpl?: typeof fetch } = {}): Promise<void> {
+  const b = bearer();
+  if (!b) throw new Error('not signed in to Cloudflare: run `cloudfact login --device` or `cloudfact login --token <token>`');
+  if (!b.accountId) throw new Error('Cloudflare account id unknown; run `cloudfact login` again (it discovers the account)');
+  const script = `/accounts/${b.accountId}/workers/scripts/${encodeURIComponent(name)}`;
+  const tags = (await api<string[] | null>(b.token, 'GET', `${script}/tags`, undefined, opts.fetchImpl)) ?? [];
+  if (!tags.includes(TAG) && !opts.known) throw new Error(`"${name}" is a Worker in this account but not a cloudfact; leaving it alone`);
+  // the address first: that is what takes the page down, or brings it back
+  await api(b.token, 'POST', `${script}/subdomain`, { enabled: on, previews_enabled: false }, opts.fetchImpl);
+  await api(b.token, 'PUT', `${script}/tags`, [...tags.filter((t) => t !== OFF_TAG), ...(on ? [] : [OFF_TAG])], opts.fetchImpl);
 }

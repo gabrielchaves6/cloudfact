@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { doctor, listDeploys, readLogs, remove, rotate, status, stop, stopAll, summarize } from '../../cloudfact.js';
+import { doctor, listDeploys, power, readLogs, remove, rotate, status, stop, stopAll, summarize } from '../../cloudfact.js';
 import { defineTool } from '../define-tool.js';
 
 export const listTool = defineTool({
@@ -29,6 +29,18 @@ export const stopTool = defineTool({
     if (!name) throw new Error('pass name or all=true');
     return stop(name);
   },
+});
+
+export const powerTool = defineTool({
+  name: 'power',
+  description:
+    'Turn a cloudfact off, or back on. Off: its link stops answering (a Workers deploy loses its workers.dev address; a tunnel answers with a "this page is off" page) but nothing is deleted, so on=true brings the very same link back, with the same key and sign-in. Deploying it again also turns it on. Prefer this over remove when the user wants something "off" or "down" rather than gone. The catalog page behind sign-in has the same switch on every card.',
+  annotations: { title: 'Turn off or on', readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  schema: {
+    name: z.string().describe('Deploy name'),
+    on: z.boolean().describe('false turns it off, true turns it back on'),
+  },
+  handler: ({ name, on }) => power(name, on),
 });
 
 export const removeTool = defineTool({

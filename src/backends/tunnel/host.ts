@@ -6,12 +6,14 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import type { Duplex } from 'node:stream';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { readConfig } from '../../config.js';
 import { log } from '../../logger.js';
 import { findCloudflared } from '../../services/cloudflared.js';
 import { deployDir, patchState, readState } from '../../services/state.js';
 import { createGate } from './gate.js';
+import { createPowerSwitch } from './power.js';
 import { createProxy } from './proxy.js';
 import { createStaticHandler } from './static-server.js';
 
@@ -35,18 +37,46 @@ let ssh: ChildProcess | null = null;
 let restarts = 0;
 let sshRestarts = 0;
 
-/** Key info re-read from state.json (cached for 1s) so `rotate` and expiry apply without a restart. */
-let keyCache: { at: number; key: string | null; expiresAt: string | null } = { at: 0, key: null, expiresAt: null };
-const gate = createGate({
-  getKey: () => {
-    if (Date.now() - keyCache.at > 1000) {
-      const s = readState(name);
-      keyCache = { at: Date.now(), key: s?.key ?? null, expiresAt: s?.keyExpiresAt ?? null };
-    }
-    return keyCache;
+/** What the server reads from state.json, at most once a second, so `rotate`, expiry and the on/off switch apply without a restart. */
+interface Live {
+  at: number;
+  key: string | null;
+  expiresAt: string | null;
+  off: boolean;
+  controlKey: string | null;
+}
+let live: Live = { at: 0, key: null, expiresAt: null, off: false, controlKey: null };
+/** WebSockets proxied right now: turning the deploy off closes them as well. */
+const sockets = new Set<Duplex>();
+function current(force = false): Live {
+  if (!force && Date.now() - live.at <= 1000) return live;
+  const s = readState(name);
+  const wasOff = live.off;
+  live = {
+    at: Date.now(),
+    key: s?.key ?? null,
+    expiresAt: s?.keyExpiresAt ?? null,
+    off: Boolean(s?.off),
+    controlKey: s?.controlKey ?? null,
+  };
+  if (live.off && !wasOff) for (const socket of sockets) socket.destroy();
+  return live;
+}
+const gate = createGate({ getKey: () => current(), log: (m) => log.ts(m) });
+const power = createPowerSwitch({
+  get: () => current(),
+  set: (off) => {
+    patchState(name, { off });
+    current(true);
   },
   log: (m) => log.ts(m),
 });
+/** The switch answers first: while the deploy is off, nothing behind it (gate, files, app) is reached. */
+const guarded =
+  (handler: http.RequestListener): http.RequestListener =>
+  (req, res) => {
+    if (!power.handle(req, res)) handler(req, res);
+  };
 
 async function main(): Promise<void> {
   let server: http.Server;
@@ -58,10 +88,18 @@ async function main(): Promise<void> {
       startSshForward(targetPort);
     }
     const proxy = createProxy({ targetPort, gate });
-    server = http.createServer(proxy.handler);
-    server.on('upgrade', proxy.upgrade);
+    server = http.createServer(guarded(proxy.handler));
+    server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
+      if (power.isOff()) {
+        socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
+        return;
+      }
+      sockets.add(socket);
+      socket.once('close', () => sockets.delete(socket));
+      proxy.upgrade(req, socket, head);
+    });
   } else {
-    server = http.createServer(createStaticHandler({ mode: initial.mode, root: initial.root, file: initial.file, gate }));
+    server = http.createServer(guarded(createStaticHandler({ mode: initial.mode, root: initial.root, file: initial.file, gate })));
   }
   server.keepAliveTimeout = 65_000;
   server.listen(0, '127.0.0.1', () => {

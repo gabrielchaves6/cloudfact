@@ -33,6 +33,7 @@ describe('MCP server', () => {
       'expose',
       'list',
       'logs',
+      'power',
       'project',
       'remove',
       'rotate',

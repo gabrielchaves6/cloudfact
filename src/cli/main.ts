@@ -16,6 +16,8 @@ usage:
                                                  (the app's own login, shown on the catalog page, which is
                                                   behind sign-in; stored on this machine only)
   cloudfact status <name> [--json]
+  cloudfact off <name> | on <name>               (turn a cloudfact off: its link stops answering, nothing is
+                                                  deleted; on brings the same link back. Also on the catalog page)
   cloudfact stop <name> | --all
   cloudfact rm <name>
   cloudfact logs <name> [-n 40]
@@ -181,7 +183,9 @@ export async function main(argv: string[]): Promise<number> {
       else if (!all.length) console.log('no deploys');
       else
         for (const s of all)
-          console.log(`${s.name.padEnd(24)} ${s.backend.padEnd(8)} ${s.status.padEnd(12)} ${s.privateUrl ?? s.url ?? '-'}`);
+          console.log(
+            `${s.name.padEnd(24)} ${s.backend.padEnd(8)} ${(s.off ? 'off' : s.status).padEnd(12)} ${s.privateUrl ?? s.url ?? '-'}`,
+          );
       return 0;
     }
     case 'status':
@@ -191,6 +195,19 @@ export async function main(argv: string[]): Promise<number> {
       const r = await cf.rotate(need(rest[0], 'the deploy name'), { expires: values.expires });
       if (values.json) print(r);
       else console.log(`rotated: ${r.name}\nURL: ${r.privateUrl}${r.keyExpiresAt ? `\nexpires: ${r.keyExpiresAt}` : ''}`);
+      return 0;
+    }
+    case 'off':
+    case 'on': {
+      const name = need(rest[0], 'the deploy name');
+      const r = await cf.power(name, cmd === 'on');
+      if (values.json) print(r);
+      else
+        console.log(
+          r.on
+            ? `on: ${r.name}${r.note ? ` (${r.note})` : ''}`
+            : `off: ${r.name}: its link answers nothing until \`cloudfact on ${r.name}\`${r.note ? ` (${r.note})` : ''}`,
+        );
       return 0;
     }
     case 'stop':

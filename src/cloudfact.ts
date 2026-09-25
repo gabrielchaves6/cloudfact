@@ -3,14 +3,25 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { BIN_SCRIPT, BRAND_DIR, HOME, VERSION, readConfig, writeConfig } from './config.js';
 import { deployTunnel, newKey, stopTunnel } from './backends/tunnel/index.js';
+import { POWER_PATH } from './backends/tunnel/power.js';
 import { rotateWorkersKey } from './backends/workers/index.js';
 import { expiryFrom } from './services/duration.js';
-import { accountEmail, catalog as readCatalog, publishedCatalogName, tagWorker } from './services/catalog.js';
+import { accountEmail, bearer, catalog as readCatalog, publishedCatalogName, switchWorker, tagWorker } from './services/catalog.js';
 import { galleryHtml } from './services/gallery.js';
 import { snapshots } from './services/snapshot.js';
 import { deleteWorker, deployWorkers } from './backends/workers/index.js';
 import { cloudflaredVersion, findCloudflared } from './services/cloudflared.js';
-import { effectiveState, isLive, listDeploys, readState, removeDeployDir, slug, summarize, writeState } from './services/state.js';
+import {
+  effectiveState,
+  isLive,
+  listDeploys,
+  patchState,
+  readState,
+  removeDeployDir,
+  slug,
+  summarize,
+  writeState,
+} from './services/state.js';
 import { credentials } from './services/wrangler.js';
 import { spawn, spawnSync } from 'node:child_process';
 
@@ -18,12 +29,14 @@ const hasSsh = (): boolean => spawnSync('sh', ['-c', 'command -v ssh'], { encodi
 import type {
   Backend,
   CatalogResult,
+  ControlTargets,
   DeployMode,
   DeployOptions,
   DeployResult,
   DeployState,
   DeploySummary,
   ExposeOptions,
+  PowerResult,
 } from './types.js';
 
 export { listDeploys, readLogs, summarize } from './services/state.js';
@@ -133,6 +146,27 @@ export function withLocalSecrets(c: CatalogResult, states: Map<string, DeploySta
 }
 
 /**
+ * Marks what the catalog page may turn off and on, and returns the list its Worker receives: the Workers
+ * in the account (never the page itself), and the tunnels this machine serves through a host that has
+ * the switch. A page found on this machine without a record of it is left alone.
+ */
+export function withControl(c: CatalogResult, states: Map<string, DeployState>, self: string): ControlTargets {
+  const targets: ControlTargets = { workers: [], tunnels: {} };
+  for (const d of c.projects.flatMap((p) => p.deploys)) {
+    if (d.name === self || d.untracked) continue;
+    const s = states.get(d.name);
+    if (d.inAccount) {
+      targets.workers.push(d.name);
+      d.switchable = true;
+    } else if (s?.backend === 'tunnel' && s.controlKey && isLive(s) && s.url) {
+      targets.tunnels[d.name] = { url: s.url, key: s.controlKey };
+      d.switchable = true;
+    }
+  }
+  return targets;
+}
+
+/**
  * Records how to get into the app behind a deploy (its own login, not cloudfact's). Stored with the
  * deploy on this machine and surfaced only on a catalog page that is itself behind sign-in.
  */
@@ -200,7 +234,11 @@ export async function publishCatalog(
   const c = await readCatalog();
   const access = opts.access ?? (opts.public ? undefined : ((await accountEmail()) ?? undefined));
   const states = new Map(listDeploys().map((s) => [s.name, s]));
+  const name = slug(opts.name ?? readConfig().catalogDeploy ?? 'cloudfacts');
   withLocalSecrets(c, states, Boolean(access));
+  // behind sign-in, the page is also where things get turned off: its Worker needs the API token for that
+  const token = credentials()?.token;
+  const control = access && token ? { accountId: c.accountId, token, targets: withControl(c, states, name) } : null;
   const shots = await snapshots(
     c.projects.flatMap((p) => p.deploys).map((d) => ({ name: d.name, url: d.url, visibility: d.visibility })),
     states,
@@ -210,15 +248,19 @@ export async function publishCatalog(
   // the page carries its own typography and mark: nothing is fetched from anywhere else at view time
   for (const file of fs.existsSync(BRAND_DIR) ? fs.readdirSync(BRAND_DIR) : [])
     fs.copyFileSync(path.join(BRAND_DIR, file), path.join(dir, file));
-  fs.writeFileSync(path.join(dir, 'index.html'), galleryHtml(c, { title: opts.title, snapshots: shots }));
-  const name = opts.name ?? readConfig().catalogDeploy ?? 'cloudfacts';
-  const result = await deploy({
-    path: dir,
+  fs.writeFileSync(path.join(dir, 'index.html'), galleryHtml(c, { title: opts.title, snapshots: shots, control: Boolean(control) }));
+  const priv = !opts.public;
+  const result = await deployWorkers({
     name,
+    mode: 'dir',
+    root: dir,
+    file: null,
+    private: priv,
+    key: priv ? newKey() : null,
+    keyExpiresAt: null,
+    access: access ? [access].flat() : null,
     project: opts.project ?? 'cloudfact',
-    access: access ? [access].flat() : undefined,
-    public: opts.public,
-    backend: 'workers',
+    control,
   });
   writeConfig({ ...readConfig(), catalogDeploy: result.name });
   // marks the page so any machine can find it later and keep it current
@@ -265,6 +307,56 @@ export async function stopAll(): Promise<{ name: string; stopped: boolean }[]> {
   const out = [];
   for (const s of listDeploys()) if (s.backend === 'tunnel' && s.status !== 'stopped') out.push(await stop(s.name));
   return out;
+}
+
+/**
+ * Turns a cloudfact off, or back on. Off only means that its link answers nothing: the files, the address,
+ * the key and the sign-in all stay, so turning it on brings the very same link back. A Worker loses its
+ * workers.dev address while off; a tunnel keeps its hostname and answers with a "this page is off" page.
+ * Deploying it again also turns it back on.
+ */
+export async function power(name: string, on: boolean): Promise<PowerResult> {
+  const s = effectiveState(name);
+  if (!s && !bearer()) throw new Error(`deploy "${name}" does not exist`);
+  let result: PowerResult = { name, on };
+  // a tunnel behind an Access proxy is reached through its Worker, so that is the switch to flip
+  if (s?.backend === 'tunnel' && !s.access) result = await powerTunnel(s, on);
+  else await switchWorker(name, on, { known: Boolean(s) });
+  await refreshCatalogPage(name);
+  return result;
+}
+
+async function powerTunnel(s: DeployState, on: boolean): Promise<PowerResult> {
+  const { name, mode } = s;
+  if (!isLive(s)) {
+    patchState(name, { off: !on });
+    return {
+      name,
+      on,
+      note: on ? `not running: start it again with \`cloudfact ${mode === 'proxy' ? 'expose' : 'deploy'}\`` : 'not running',
+    };
+  }
+  if (!s.controlKey)
+    throw new Error(
+      `"${name}" was started by an older cloudfact, which has no off switch: \`cloudfact stop ${name}\` ends it, and deploying it again with --restart gives it one (and a new link)`,
+    );
+  // the host flips it itself: immediate, and open WebSockets close with it
+  const local = s.local ?? (s.port ? `http://127.0.0.1:${s.port}` : null);
+  if (local) {
+    try {
+      const res = await fetch(`${local}${POWER_PATH}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${s.controlKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ on }),
+        signal: AbortSignal.timeout(4000),
+      });
+      if (res.ok) return { name, on: ((await res.json()) as { on: boolean }).on };
+    } catch {
+      /* not answering here: the state file below is what it re-reads every second anyway */
+    }
+  }
+  patchState(name, { off: !on });
+  return { name, on };
 }
 
 export async function remove(name: string): Promise<{ name: string; removed: true; remote?: string }> {

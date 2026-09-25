@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Added
 
+- Turn a cloudfact off, and back on: `cloudfact off <name>` / `cloudfact on <name>`, MCP tool `power`, and a ✕ on every card of a catalog page behind sign-in (with a confirmation, an `Off` state and a **Turn on** button). Off means the link answers nothing and nothing else: files, address, key and sign-in stay, so on brings the same link back. Workers lose their `workers.dev` address (and preview URLs) while off and carry a `cloudfact:off` tag; tunnels keep their hostname and answer a "this page is off" page, WebSockets closed included. A redeploy turns a deploy back on. The catalog's Worker switches only what the page lists, only behind Access and only for requests from the page itself; it holds the API token as a secret for that, and a catalog republished without the switch loses the token again.
+
 - `cloudfact setup --codex`: registers the MCP server and installs the `/cloudfact` skill in Codex from Node, so it also works on Windows, where the shell installer cannot run. The skill is copied rather than symlinked, and the frontmatter keys Codex refuses are stripped — the old symlink pointed at a path that does not exist, so the skill never loaded there.
 
 ### Fixed

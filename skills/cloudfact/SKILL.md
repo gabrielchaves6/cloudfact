@@ -6,7 +6,7 @@ argument-hint: <folder or file.html> [--public] [--name name] [--tunnel|--worker
 
 # /cloudfact — publish a static page to Cloudflare
 
-The `cloudfact` MCP server is available (tools `deploy`, `expose`, `list`, `status`, `stop`, `remove`, `logs`, `doctor`).
+The `cloudfact` MCP server is available (tools `deploy`, `expose`, `list`, `catalog`, `status`, `power`, `stop`, `remove`, `logs`, `doctor`).
 If the MCP tools are not loaded in this session, use the equivalent CLI through the shell:
 `cloudfact deploy <path> [--public] [--name n] [--backend tunnel|workers] [--restart] --json`.
 
@@ -45,4 +45,5 @@ If the argument starts with `expose`, or the user wants to publish something tha
 - Never copy the private key into the user's project files; it already lives in `~/.cloudfact/deploys/<name>/state.json` (0600).
 - Do not republish in a loop: `deploy` is idempotent and returns the existing URL when the same path is already live (`reused: true`).
 - To revoke a shared link without taking the site down, use the `rotate` tool and hand over the new `privateUrl`.
+- When the user wants something "off", "down" or "offline" (not deleted), use `power` with `on: false`: the link stops answering and nothing is lost; `on: true` brings the same link back. Use `remove` only when they want it gone. The catalog page behind sign-in has the same switch (a ✕ on each card).
 - Never serve `/` or `$HOME` as a whole; if asked, point at a specific subfolder.
