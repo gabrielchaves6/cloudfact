@@ -23330,9 +23330,10 @@ async function expose(opts) {
     await refreshCatalogPage(name);
     return exposed;
   }
-  if (!exposed.url) throw new Error(`the tunnel for "${name}" came up without a URL`);
-  const proxy = await deployAccessProxy({ name, origin: exposed.url, originKey: readState(name)?.key ?? null, emails: access });
-  const next = { ...readState(name), url: proxy.url, tunnelUrl: exposed.url, privateUrl: null, access: proxy.access };
+  const origin = readState(name)?.tunnelUrl ?? exposed.url;
+  if (!origin) throw new Error(`the tunnel for "${name}" came up without a URL`);
+  const proxy = await deployAccessProxy({ name, origin, originKey: readState(name)?.key ?? null, emails: access });
+  const next = { ...readState(name), url: proxy.url, tunnelUrl: origin, privateUrl: null, access: proxy.access };
   writeState(name, next);
   await refreshCatalogPage(name);
   return { ...summarize(next), reused: exposed.reused };
