@@ -83,6 +83,8 @@ export interface ExposeOptions {
   ssh?: SshTarget | null;
   /** Project to file this deploy under in the account catalog. */
   project?: string;
+  /** Emails allowed in through Cloudflare Access. Adds a fixed workers.dev URL in front of the tunnel. */
+  access?: string[];
   restart?: boolean;
   timeoutMs?: number;
 }

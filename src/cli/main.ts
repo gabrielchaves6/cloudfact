@@ -5,7 +5,7 @@ const HELP = `cloudfact ${cf.VERSION} — publish static pages from this machine
 
 usage:
   cloudfact deploy [path] [--name n] [--public] [--expires 24h] [--access a@x.com,b@y.com] [--project p] [--backend auto|tunnel|workers] [--restart] [--json]
-  cloudfact expose <port> [--name n] [--public] [--expires 24h] [--ssh user@host] [--ssh-port 22] [--identity key] [--strict-host-key] [--restart] [--json]
+  cloudfact expose <port> [--name n] [--public] [--access a@x.com,b@y.com] [--expires 24h] [--project p] [--ssh user@host] [--ssh-port 22] [--identity key] [--strict-host-key] [--restart] [--json]
   cloudfact rotate <name> [--expires 24h]
   cloudfact list [--json]
   cloudfact catalog [--project p] [--publish] [--access a@x.com] [--json]
@@ -108,6 +108,8 @@ export async function main(argv: string[]): Promise<number> {
         name: values.name,
         public: values.public,
         expires: values.expires,
+        access: values.access ? values.access.split(',') : undefined,
+        project: values.project,
         restart: values.restart,
         ssh: values.ssh
           ? {
@@ -124,6 +126,7 @@ export async function main(argv: string[]): Promise<number> {
           `${r.reused ? 'already live' : 'published'}: ${r.name} → ${r.ssh ? `${r.ssh.destination}:` : 'localhost:'}${r.targetPort}`,
         );
         console.log(`URL: ${r.privateUrl ?? r.url}`);
+        if (r.access) console.log(`access: sign-in required (${r.access.emails.join(', ')}) via ${r.access.teamDomain}`);
         const hint = cf.catalogHint();
         if (hint) console.log(hint);
       }

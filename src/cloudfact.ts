@@ -4,7 +4,7 @@ import path from 'node:path';
 import { BIN_SCRIPT, BRAND_DIR, HOME, VERSION, readConfig, writeConfig } from './config.js';
 import { deployTunnel, newKey, stopTunnel } from './backends/tunnel/index.js';
 import { POWER_PATH } from './backends/tunnel/power.js';
-import { rotateWorkersKey } from './backends/workers/index.js';
+import { deployAccessProxy, rotateWorkersKey } from './backends/workers/index.js';
 import { expiryFrom } from './services/duration.js';
 import { accountEmail, bearer, catalog as readCatalog, publishedCatalogName, switchWorker, tagWorker } from './services/catalog.js';
 import { galleryHtml } from './services/gallery.js';
@@ -111,7 +111,10 @@ export async function expose(opts: ExposeOptions): Promise<DeployResult> {
   const ssh = opts.ssh?.destination
     ? { destination: opts.ssh.destination, port: opts.ssh.port, identity: opts.ssh.identity, strictHostKey: opts.ssh.strictHostKey }
     : null;
-  const priv = !opts.public;
+  const access = opts.access?.length ? opts.access : null;
+  // With Access the tunnel keeps its key gate and only the Worker holds the key, so the
+  // trycloudflare hostname is useless on its own; identity is what lets a person in.
+  const priv = access ? true : !opts.public;
   const name = slug(opts.name ?? (ssh ? `${ssh.destination.split('@').pop()}-${opts.port}` : `port-${opts.port}`));
   const exposed = await deployTunnel({
     name,
@@ -121,13 +124,21 @@ export async function expose(opts: ExposeOptions): Promise<DeployResult> {
     targetPort: opts.port,
     ssh,
     private: priv,
-    keyExpiresAt: priv ? expiryFrom(opts.expires) : null,
+    keyExpiresAt: priv ? (access ? null : expiryFrom(opts.expires)) : null,
     project: opts.project ?? null,
     restart: Boolean(opts.restart),
     timeoutMs: opts.timeoutMs ?? 45_000,
   });
+  if (!access) {
+    await refreshCatalogPage(name);
+    return exposed;
+  }
+  if (!exposed.url) throw new Error(`the tunnel for "${name}" came up without a URL`);
+  const proxy = await deployAccessProxy({ name, origin: exposed.url, originKey: readState(name)?.key ?? null, emails: access });
+  const next = { ...readState(name)!, url: proxy.url, tunnelUrl: exposed.url, privateUrl: null, access: proxy.access };
+  writeState(name, next);
   await refreshCatalogPage(name);
-  return exposed;
+  return { ...summarize(next), reused: exposed.reused };
 }
 
 /**

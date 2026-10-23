@@ -34,6 +34,7 @@ _mutating, idempotent_
 | `sshPort` | number | no | SSH port (default 22) |
 | `identity` | string | no | Path to the SSH private key (default: ssh agent / ~/.ssh/config) |
 | `strictHostKey` | boolean | no | Require the SSH host key to be in known_hosts already (no first-connection trust) |
+| `access` | array | no | Emails allowed to sign in through Cloudflare Access (identity gate and a fixed workers.dev URL instead of the key link) |
 | `restart` | boolean | no | Restart even if already live (yields a new URL) |
 
 ## `list` — List deploys
