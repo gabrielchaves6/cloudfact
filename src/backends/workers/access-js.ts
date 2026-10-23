@@ -42,7 +42,10 @@ function accessToken(request) {
   return null;
 }
 async function verifyAccess(request, team, aud) {
-  const token = accessToken(request);
+  return verifyToken(accessToken(request), team, aud);
+}
+/** The token's claims (email…) when it is a valid Access JWT for this team and app; otherwise false. */
+async function verifyToken(token, team, aud) {
   if (!token) return false;
   const parts = token.split('.');
   if (parts.length !== 3) return false;

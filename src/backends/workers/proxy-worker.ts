@@ -54,7 +54,18 @@ export default {
 };
 `;
 
-/** Worker config for the proxy: no static assets, just the Worker. */
+/** Worker config for the proxy: no static assets, just the Worker, and a per-IP limit on its sign-in forms. */
 export function proxyWranglerConfig(name: string, compatibilityDate: string): string {
-  return JSON.stringify({ name, main: 'index.js', compatibility_date: compatibilityDate, workers_dev: true, preview_urls: false }, null, 2);
+  return JSON.stringify(
+    {
+      name,
+      main: 'index.js',
+      compatibility_date: compatibilityDate,
+      workers_dev: true,
+      preview_urls: false,
+      ratelimits: [{ name: 'SESSION_LIMIT', namespace_id: '1001', simple: { limit: 10, period: 60 } }],
+    },
+    null,
+    2,
+  );
 }

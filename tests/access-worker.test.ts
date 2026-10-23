@@ -6,7 +6,7 @@ import { WORKER_SOURCE } from '../src/backends/workers/gate-worker.js';
 import { AUD, SESSION_SECRET, TEAM, claims, cookieOf, jwt, login, rsa } from './access-helpers.js';
 import { tmpDir } from './helpers.js';
 
-describe('gate worker in Access mode: Access on the sign-in path, then its own "Remember me" cookie', () => {
+describe('gate worker in Access mode: its own sign-in pages and "Remember me" cookie, Access behind', () => {
   let dir: string;
   let worker: { fetch: (req: Request, env: unknown, ctx: unknown) => Promise<Response> };
   let keys: Awaited<ReturnType<typeof rsa>>;
@@ -60,7 +60,8 @@ describe('gate worker in Access mode: Access on the sign-in path, then its own "
     const res = await page({}, env, '/painel?a=1');
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('<form method="get" action="/.cloudfact/login">');
+    expect(html).toContain('<form method="post" action="/.cloudfact/email">');
+    expect(html).toContain('type="email" name="email" required');
     expect(html).toContain('name="remember" value="1" checked>Remember me');
     expect(html).toContain('<input type="hidden" name="next" value="/painel?a=1">');
     expect(html).toContain('<h1>site</h1>');
@@ -72,7 +73,7 @@ describe('gate worker in Access mode: Access on the sign-in path, then its own "
     const html = await (await page({ 'accept-language': 'pt-BR,pt;q=0.9,en;q=0.8' })).text();
     expect(html).toContain('lang="pt"');
     expect(html).toContain('Lembrar meu login');
-    expect(html).toContain('>Entrar</button>');
+    expect(html).toContain('>Enviar código</button>');
   });
 
   it('answers 401, not a page, to a request that is not a page load', async () => {
@@ -83,7 +84,7 @@ describe('gate worker in Access mode: Access on the sign-in path, then its own "
   it('does not take an Access token outside the sign-in path: only the session cookie lets one in', async () => {
     assetFetches = 0;
     const res = await page({ 'cf-access-jwt-assertion': await token() });
-    expect(await res.text()).toContain('action="/.cloudfact/login"');
+    expect(await res.text()).toContain('action="/.cloudfact/email"');
     expect(assetFetches).toBe(0);
   });
 
@@ -108,7 +109,7 @@ describe('gate worker in Access mode: Access on the sign-in path, then its own "
     expect((await page({ cookie: cookieOf(res) })).status).toBe(200);
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(Date.now() + 25 * 3600 * 1000);
-    expect(await (await page({ cookie: cookieOf(res) })).text()).toContain('action="/.cloudfact/login"');
+    expect(await (await page({ cookie: cookieOf(res) })).text()).toContain('action="/.cloudfact/email"');
   });
 
   it('a remembered browser stays signed in: after a day its cookie is pushed forward', async () => {
@@ -172,14 +173,14 @@ describe('gate worker in Access mode: Access on the sign-in path, then its own "
       `${name}=${body}.${sig.slice(0, -2)}AA`, // signature tampered
       `${name}=${body}`, // no signature
     ];
-    for (const cookie of cases) expect(await (await page({ cookie })).text()).toContain('action="/.cloudfact/login"');
+    for (const cookie of cases) expect(await (await page({ cookie })).text()).toContain('action="/.cloudfact/email"');
     // another key (a site that rotated it, or another site), another app, or the email taken off the list
     for (const e of [
       { ...env, CLOUDFACT_SESSION_SECRET: 'another-secret' },
       { ...env, CLOUDFACT_ACCESS_AUD: 'another-app' },
       { ...env, CLOUDFACT_ACCESS_EMAILS: 'bob@example.com' },
     ])
-      expect(await (await page({ cookie: good }, e)).text()).toContain('action="/.cloudfact/login"');
+      expect(await (await page({ cookie: good }, e)).text()).toContain('action="/.cloudfact/email"');
   });
 
   it('only sends the visitor back to a path on this site', async () => {

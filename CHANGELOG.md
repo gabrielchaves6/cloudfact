@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-22
+
+### Changed
+
+- Sign-in behind Cloudflare Access is now entirely on cloudfact's own pages: email (with **Remember me**), then code, in the CloudFacts look. Access still mails and checks the code; the Worker drives its one-time PIN forms behind the pages and turns the resulting Access JWT into its own cookie. Those forms are not a documented API, so anything unexpected falls back to Cloudflare's page at `/.cloudfact/login`. The forms take posts only from the site itself and are rate-limited per IP (the Access proxy Worker now has the limiter too).
+
 ## [0.10.0] - 2026-10-22
 
 ### Added
