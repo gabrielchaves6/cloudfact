@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-22
+
+### Added
+
+- **Remember me** behind Cloudflare Access. Access now guards only `/.cloudfact/login`; the Worker keeps people signed in with its own HttpOnly cookie, HMAC-signed with a per-deploy key (`CLOUDFACT_SESSION_SECRET`, kept across redeploys). The sign-in page has a **Remember me** box, ticked by default and in Portuguese for a Portuguese browser: remembered, the cookie lasts 400 days and is pushed forward once a day while in use; not remembered, it ends with the browser and after a day at most. Before, the Access session expired every 24 hours and asked for a new email code each day. The cookie names the email and stops working when it leaves the `--access` list; `/.cloudfact/logout` signs out. Existing Access apps are narrowed to the sign-in path on the next deploy.
+- `expose --access a@x.com` (from the `feat/expose-access` branch, in use since 2026-09-15): an app on this machine behind a fixed `*.workers.dev` URL, through a proxy Worker that signs the visitor in and only then forwards to the quick tunnel with the tunnel's own key cookie. Survives cloudflared reconnects: the Worker is repointed at the new tunnel hostname. Also on the `expose` MCP tool. Access JWT verification is shared by both Workers (`access-js.ts`), and so is the sign-in (`session-js.ts`).
+
 ## [0.9.0] - 2026-09-25
 
 ### Added

@@ -68,6 +68,6 @@ async function verifyAccess(request, team, aud) {
   if (typeof payload.nbf === 'number' && payload.nbf > now + 60) return false;
   if (payload.iss !== 'https://' + team) return false;
   const auds = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
-  return auds.includes(aud);
+  return auds.includes(aud) ? payload : false; // the claims (email) when valid
 }
 `;

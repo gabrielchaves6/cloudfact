@@ -31,6 +31,8 @@ interface DeployState {
     off?: boolean;
     /** Secret for the tunnel host's on/off switch. Never part of a link; never returned (see summarize()). */
     controlKey?: string | null;
+    /** Key that signs the site's own sign-in cookie behind Access. Never returned (see summarize()). */
+    sessionSecret?: string | null;
     error?: string | null;
     hostPid?: number | null;
     tunnelPid?: number | null;
@@ -69,8 +71,8 @@ interface DeployState {
     /** Catalog page only: its Worker holds the secrets that let the page turn deploys off and on. */
     control?: boolean;
 }
-/** State without the private key (privateUrl already carries it) and without the switch's key. */
-type DeploySummary = Omit<DeployState, 'key' | 'controlKey'>;
+/** State without the private key (privateUrl already carries it), the switch's key and the sign-in key. */
+type DeploySummary = Omit<DeployState, 'key' | 'controlKey' | 'sessionSecret'>;
 interface SshTarget {
     /** user@host or host */
     destination: string;

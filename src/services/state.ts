@@ -81,7 +81,7 @@ export function listDeploys(): DeployState[] {
 }
 
 export function summarize(state: DeployState): DeploySummary {
-  const { key: _key, controlKey: _controlKey, ...rest } = state;
+  const { key: _key, controlKey: _controlKey, sessionSecret: _sessionSecret, ...rest } = state;
   return rest;
 }
 

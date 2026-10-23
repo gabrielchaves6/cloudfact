@@ -237,7 +237,7 @@ function listDeploys() {
   return fs3.readdirSync(DEPLOYS_DIR).map(effectiveState).filter((s) => s !== null).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 function summarize(state) {
-  const { key: _key, controlKey: _controlKey, ...rest } = state;
+  const { key: _key, controlKey: _controlKey, sessionSecret: _sessionSecret, ...rest } = state;
   return rest;
 }
 function readLogs(name, lines = 40) {
@@ -620,7 +620,128 @@ async function verifyAccess(request, team, aud) {
   if (typeof payload.nbf === 'number' && payload.nbf > now + 60) return false;
   if (payload.iss !== 'https://' + team) return false;
   const auds = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
-  return auds.includes(aud);
+  return auds.includes(aud) ? payload : false; // the claims (email) when valid
+}
+`;
+  }
+});
+
+// src/backends/workers/session-js.ts
+var LOGIN_HTML, SESSION_JS;
+var init_session_js = __esm({
+  "src/backends/workers/session-js.ts"() {
+    "use strict";
+    init_gate();
+    LOGIN_HTML = `${PAGE_HEAD.replace('lang="en"', 'lang="{{lang}}"')}<style>
+form{margin:1.4rem auto 0;max-width:17rem;text-align:left}
+label{display:flex;gap:.6rem;align-items:center;font-size:15px;color:#d6d6d1;cursor:pointer;padding:.4rem 0}
+input[type=checkbox]{width:18px;height:18px;margin:0;accent-color:#f4f4f1}
+button{margin-top:1rem;width:100%;padding:.75rem 1rem;border:0;border-radius:10px;background:#f4f4f1;color:#0d0d0d;
+font:inherit;font-weight:500;cursor:pointer}button:focus-visible{outline:2px solid #f4f4f1;outline-offset:3px}
+</style><body><div class="box"><img src="${MARK}" alt=""><h1>{{site}}</h1>
+<form method="get" action="/.cloudfact/login"><input type="hidden" name="next" value="{{next}}">
+<label><input type="checkbox" name="remember" value="1" checked>{{remember}}</label>
+<button type="submit">{{signin}}</button></form></div></body></html>`;
+    SESSION_JS = `
+// --- cloudfact's own sign-in cookie ("Remember me"), minted once Access has vouched for the visitor ---
+const SESSION_COOKIE = 'cloudfact_session';
+const LOGIN_PATH = '/.cloudfact/login';
+const LOGOUT_PATH = '/.cloudfact/logout';
+const REMEMBER_FOR = 400 * 86400; // the longest a browser keeps a cookie
+const SESSION_FOR = 86400; // not remembered: until the browser closes, and a day at most
+const RENEW_AFTER = 86400; // a remembered sign-in is pushed forward at most once a day
+const LOGIN_HTML = ${JSON.stringify(LOGIN_HTML)};
+const LOGIN_TEXT = {
+  en: { signin: 'Sign in', remember: 'Remember me' },
+  pt: { signin: 'Entrar', remember: 'Lembrar meu login' },
+};
+function cookieNamed(request, name) {
+  for (const part of (request.headers.get('cookie') || '').split(';')) {
+    const [k, ...v] = part.trim().split('=');
+    if (k === name) return v.join('=');
+  }
+  return null;
+}
+function toB64url(bytes) {
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+}
+let sessionKeyCache = { secret: null, key: null };
+async function sessionKey(secret) {
+  if (sessionKeyCache.secret !== secret)
+    sessionKeyCache = { secret, key: await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']) };
+  return sessionKeyCache.key;
+}
+function allowedEmails(env) {
+  return (env.CLOUDFACT_ACCESS_EMAILS || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
+}
+async function sessionCookie(env, email, remember) {
+  const now = Math.floor(Date.now() / 1000);
+  const claims = { e: email, a: env.CLOUDFACT_ACCESS_AUD, r: remember ? 1 : 0, iat: now, exp: now + (remember ? REMEMBER_FOR : SESSION_FOR) };
+  const body = toB64url(enc.encode(JSON.stringify(claims)));
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', await sessionKey(env.CLOUDFACT_SESSION_SECRET), enc.encode(body)));
+  return SESSION_COOKIE + '=' + body + '.' + toB64url(sig) + '; Path=/; HttpOnly; Secure; SameSite=Lax' + (remember ? '; Max-Age=' + REMEMBER_FOR : '');
+}
+async function readSession(request, env) {
+  const raw = cookieNamed(request, SESSION_COOKIE);
+  if (!raw || !env.CLOUDFACT_SESSION_SECRET) return null;
+  const parts = raw.split('.');
+  if (parts.length !== 2) return null;
+  let claims;
+  try {
+    if (!(await crypto.subtle.verify('HMAC', await sessionKey(env.CLOUDFACT_SESSION_SECRET), b64url(parts[1]), enc.encode(parts[0])))) return null;
+    claims = JSON.parse(new TextDecoder().decode(b64url(parts[0])));
+  } catch {
+    return null;
+  }
+  const now = Math.floor(Date.now() / 1000);
+  if (!claims || typeof claims.exp !== 'number' || claims.exp <= now || claims.a !== env.CLOUDFACT_ACCESS_AUD) return null;
+  if (typeof claims.e !== 'string' || !allowedEmails(env).includes(claims.e.toLowerCase())) return null;
+  return claims;
+}
+/** Where to go after signing in: a path on this site, never another host and never back to the login. */
+function safeNext(value) {
+  if (!value || value[0] !== '/' || value[1] === '/' || /[\\\\\\u0000-\\u001f]/.test(value) || value.startsWith('/.cloudfact/')) return '/';
+  return value;
+}
+const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+function loginPage(request, url) {
+  const lang = /^pt\\b/i.test(request.headers.get('accept-language') || '') ? 'pt' : 'en';
+  const t = LOGIN_TEXT[lang];
+  const slots = { lang, site: escapeHtml(url.host.split('.')[0]), next: escapeHtml(safeNext(url.pathname + url.search)), remember: t.remember, signin: t.signin };
+  return LOGIN_HTML.replace(/\\{\\{(\\w+)\\}\\}/g, (_, k) => slots[k]);
+}
+/**
+ * Access mode, before anything else: { response } answers instead of the site; { renew } lets the request
+ * through, with a fresh cookie to send back (or null).
+ */
+async function signIn(request, env, url) {
+  if (url.pathname === LOGIN_PATH) {
+    // Cloudflare Access guards this one path: a request only gets here signed in, with its token
+    let claims = false;
+    try {
+      claims = await verifyAccess(request, env.CLOUDFACT_ACCESS_TEAM, env.CLOUDFACT_ACCESS_AUD);
+    } catch {
+      claims = false;
+    }
+    const email = claims && typeof claims.email === 'string' ? claims.email.toLowerCase() : '';
+    if (!email || !allowedEmails(env).includes(email))
+      return { response: reply(403, 'cloudfact: Cloudflare Access did not vouch for an allowed email on this request.', { 'content-type': 'text/plain' }) };
+    if (!env.CLOUDFACT_SESSION_SECRET) return { response: reply(503, 'cloudfact: sign-in is not configured for this site yet', { 'content-type': 'text/plain' }) };
+    const remember = url.searchParams.get('remember') === '1';
+    return { response: reply(303, null, { location: safeNext(url.searchParams.get('next')), 'set-cookie': await sessionCookie(env, email, remember) }) };
+  }
+  if (url.pathname === LOGOUT_PATH)
+    return { response: reply(303, null, { location: '/cdn-cgi/access/logout', 'set-cookie': SESSION_COOKIE + '=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0' }) };
+  const session = await readSession(request, env);
+  if (session) {
+    const stale = session.r === 1 && Math.floor(Date.now() / 1000) - session.iat > RENEW_AFTER;
+    return { renew: stale ? await sessionCookie(env, session.e, true) : null };
+  }
+  if (request.method === 'GET' && (request.headers.get('accept') || '').includes('text/html'))
+    return { response: reply(200, loginPage(request, url), { 'content-type': 'text/html; charset=utf-8' }) };
+  return { response: reply(401, 'cloudfact: not signed in. Open https://' + url.host + '/ to sign in.', { 'content-type': 'text/plain' }) };
 }
 `;
   }
@@ -649,10 +770,12 @@ var init_gate_worker = __esm({
     init_gate();
     init_control_js();
     init_access_js();
+    init_session_js();
     WORKER_SOURCE = `// generated by cloudfact \u2014 gate worker
 const COOKIE = 'cloudfact_access';
 const GATE_HTML = ${JSON.stringify(GATE_HTML)};
 ${ACCESS_JS}
+${SESSION_JS}
 ${CONTROL_JS}
 function timingEqual(a, b) {
   const x = enc.encode(a), y = enc.encode(b);
@@ -671,19 +794,15 @@ export default {
   async fetch(request, env, ctx) {
     if (env.CLOUDFACT_ACCESS === '1') {
       if (!env.CLOUDFACT_ACCESS_AUD || !env.CLOUDFACT_ACCESS_TEAM) return reply(503, 'cloudfact: Cloudflare Access not configured for this site yet', { 'content-type': 'text/plain' });
-      let ok = false;
-      try {
-        ok = await verifyAccess(request, env.CLOUDFACT_ACCESS_TEAM, env.CLOUDFACT_ACCESS_AUD);
-      } catch {
-        ok = false;
-      }
-      if (!ok) return reply(403, 'cloudfact: this site is protected by Cloudflare Access and the request carried no valid Access token for it. Sign in at https://' + new URL(request.url).host + '/ (if you just signed in, the Access application may still be propagating; retry in a minute).', { 'content-type': 'text/plain' });
       const url = new URL(request.url);
+      const gate = await signIn(request, env, url);
+      if (gate.response) return gate.response;
       if (url.pathname.startsWith('/.cloudfact/')) return control(request, env, url);
       const res = await env.ASSETS.fetch(request);
       const out = new Response(res.body, res);
       out.headers.set('cache-control', 'private, no-cache');
       out.headers.set('x-robots-tag', 'noindex, nofollow');
+      if (gate.renew) out.headers.append('set-cookie', gate.renew);
       return out;
     }
     const key = env.CLOUDFACT_KEY;
@@ -727,8 +846,10 @@ var init_proxy_worker = __esm({
   "src/backends/workers/proxy-worker.ts"() {
     "use strict";
     init_access_js();
+    init_session_js();
     PROXY_WORKER_SOURCE = `// generated by cloudfact \u2014 access proxy worker
 ${ACCESS_JS}
+${SESSION_JS}
 const ORIGIN_COOKIE = 'cloudfact_access';
 const HOP_BY_HOP = ['connection', 'keep-alive', 'transfer-encoding', 'te', 'trailer', 'proxy-authorization', 'proxy-authenticate'];
 
@@ -737,27 +858,14 @@ export default {
     if (env.CLOUDFACT_ACCESS !== '1' || !env.CLOUDFACT_ACCESS_AUD || !env.CLOUDFACT_ACCESS_TEAM) {
       return reply(503, 'cloudfact: Cloudflare Access is not configured for this app yet', { 'content-type': 'text/plain' });
     }
-    let ok = false;
-    try {
-      ok = await verifyAccess(request, env.CLOUDFACT_ACCESS_TEAM, env.CLOUDFACT_ACCESS_AUD);
-    } catch {
-      ok = false;
-    }
-    if (!ok) {
-      return reply(
-        403,
-        'cloudfact: this app is protected by Cloudflare Access and the request carried no valid Access token for it. Sign in at https://' +
-          new URL(request.url).host +
-          '/ (if you just signed in, the Access application may still be propagating; retry in a minute).',
-        { 'content-type': 'text/plain' },
-      );
-    }
+    const url = new URL(request.url);
+    const gate = await signIn(request, env, url);
+    if (gate.response) return gate.response;
     if (!env.CLOUDFACT_ORIGIN) {
       return reply(503, 'cloudfact: the machine serving this app has no tunnel right now; it should reconnect on its own', {
         'content-type': 'text/plain',
       });
     }
-    const url = new URL(request.url);
     const target = new URL(url.pathname + url.search, env.CLOUDFACT_ORIGIN);
     const headers = new Headers(request.headers);
     for (const h of HOP_BY_HOP) headers.delete(h);
@@ -778,6 +886,7 @@ export default {
     const out = new Response(res.body, res);
     out.headers.set('cache-control', 'private, no-cache');
     out.headers.set('x-robots-tag', 'noindex, nofollow');
+    if (gate.renew) out.headers.append('set-cookie', gate.renew);
     return out;
   },
 };
@@ -849,7 +958,7 @@ async function upsertAccessApp(ctx, opts) {
   if (!emails.length) throw new Error("--access needs at least one email");
   const body = {
     name: `cloudfact: ${opts.name}`,
-    domain: opts.domain,
+    domain: opts.domain + LOGIN_PATH,
     type: "self_hosted",
     session_duration: opts.sessionDuration ?? "24h",
     auto_redirect_to_identity: true,
@@ -857,7 +966,7 @@ async function upsertAccessApp(ctx, opts) {
     policies: [{ name: "cloudfact allow list", decision: "allow", include: emails.map((email2) => ({ email: { email: email2 } })) }]
   };
   const existing = (await ctx.client.request("GET", `${base}?per_page=100`)).find(
-    (a) => a.domain === opts.domain
+    (a) => a.domain === opts.domain || a.domain === opts.domain + LOGIN_PATH
   );
   const app = existing ? await ctx.client.request("PUT", `${base}/${existing.id}`, body) : await ctx.client.request("POST", base, body);
   return { appId: app.id, aud: app.aud, domain: opts.domain, emails, teamDomain };
@@ -869,12 +978,21 @@ async function workersSubdomain(ctx) {
   return r.subdomain;
 }
 function accessVars(app) {
-  return ["--var", "CLOUDFACT_ACCESS:1", "--var", `CLOUDFACT_ACCESS_AUD:${app.aud}`, "--var", `CLOUDFACT_ACCESS_TEAM:${app.teamDomain}`];
+  return [
+    "--var",
+    "CLOUDFACT_ACCESS:1",
+    "--var",
+    `CLOUDFACT_ACCESS_AUD:${app.aud}`,
+    "--var",
+    `CLOUDFACT_ACCESS_TEAM:${app.teamDomain}`,
+    "--var",
+    `CLOUDFACT_ACCESS_EMAILS:${app.emails.join(",")}`
+  ];
 }
 async function deleteAccessApp(ctx, appId) {
   await ctx.client.request("DELETE", `/accounts/${ctx.accountId}/access/apps/${appId}`);
 }
-var API, ACCESS_TOKEN_HELP;
+var API, ACCESS_TOKEN_HELP, LOGIN_PATH;
 var init_access = __esm({
   "src/services/access.ts"() {
     "use strict";
@@ -882,6 +1000,7 @@ var init_access = __esm({
     init_wrangler();
     API = "https://api.cloudflare.com/client/v4";
     ACCESS_TOKEN_HELP = 'Cloudflare Access needs an API token (the browser login has no Access scopes). Create one at https://dash.cloudflare.com/profile/api-tokens \u2192 Create Token \u2192 template "Edit Cloudflare Workers" \u2192 add permissions "Access: Apps and Policies \u2014 Edit" and "Access: Organizations, Identity Providers, and Groups \u2014 Edit" \u2192 then run: cloudfact login --token <token>';
+    LOGIN_PATH = "/.cloudfact/login";
   }
 });
 
@@ -1016,7 +1135,7 @@ async function catalog(opts = {}) {
     if (!(s.tags ?? []).includes(TAG)) continue;
     const url = subdomain ? `https://${s.id}.${subdomain}.workers.dev` : null;
     const state = local.get(s.id);
-    const app = url ? apps.find((a) => a.domain === new URL(url).host) : void 0;
+    const app = url ? apps.find((a) => a.domain?.split("/")[0] === new URL(url).host) : void 0;
     const visibility = tagValue(s.tags, VIS_TAG) ?? (state ? visibilityOf(state) : app ? "access" : "public");
     entries.push({
       name: s.id,
@@ -1164,8 +1283,25 @@ var init_catalog = __esm({
 });
 
 // src/backends/workers/index.ts
+import crypto3 from "crypto";
 import fs6 from "fs";
 import path5 from "path";
+function sessionSecret(name) {
+  const s = readState(name);
+  if (s?.sessionSecret) return s.sessionSecret;
+  const secret = crypto3.randomBytes(32).toString("base64url");
+  if (s) writeState(name, { ...s, sessionSecret: secret });
+  return secret;
+}
+function deployWithSecrets(args, values, opts) {
+  const file = path5.join(opts.cwd, ".deploy-secrets.json");
+  fs6.writeFileSync(file, JSON.stringify(values), { mode: 384 });
+  try {
+    return runWrangler([...args, "--secrets-file", file], opts);
+  } finally {
+    fs6.rmSync(file, { force: true });
+  }
+}
 function stageDir(src, dst) {
   fs6.rmSync(dst, { recursive: true, force: true });
   fs6.mkdirSync(dst, { recursive: true });
@@ -1230,16 +1366,13 @@ async function deployWorkers(t) {
   const deployAccessWorker = (app) => {
     const workerDir = path5.join(dir, "worker");
     const args = ["deploy", "--config", path5.join(workerDir, "wrangler.jsonc"), ...accessVars(app)];
-    if (!control) return runWrangler(args, { cfg, creds, cwd: workerDir, logFile });
-    const secrets = path5.join(workerDir, ".control-secrets.json");
-    const values = { CLOUDFACT_API_TOKEN: control.token, CLOUDFACT_CONTROL_TARGETS: JSON.stringify(control.targets) };
-    fs6.writeFileSync(secrets, JSON.stringify(values), { mode: 384 });
-    try {
-      const vars = ["--var", "CLOUDFACT_CONTROL:1", "--var", `CLOUDFACT_ACCOUNT_ID:${control.accountId}`];
-      return runWrangler([...args, ...vars, "--secrets-file", secrets], { cfg, creds, cwd: workerDir, logFile });
-    } finally {
-      fs6.rmSync(secrets, { force: true });
+    const values = { CLOUDFACT_SESSION_SECRET: sessionSecret(t.name) };
+    if (control) {
+      values.CLOUDFACT_API_TOKEN = control.token;
+      values.CLOUDFACT_CONTROL_TARGETS = JSON.stringify(control.targets);
+      args.push("--var", "CLOUDFACT_CONTROL:1", "--var", `CLOUDFACT_ACCOUNT_ID:${control.accountId}`);
     }
+    return deployWithSecrets(args, values, { cfg, creds, cwd: workerDir, logFile });
   };
   if (accessCtx) {
     const domain = `${t.name}.${await workersSubdomain(accessCtx)}.workers.dev`;
@@ -1364,7 +1497,9 @@ async function deployAccessProxy(t) {
   fs6.writeFileSync(path5.join(workerDir, "wrangler.jsonc"), proxyWranglerConfig(t.name, compatibilityDate));
   const logFile = path5.join(dir, "wrangler.log");
   const config2 = path5.join(workerDir, "wrangler.jsonc");
-  const deployOnce = (a) => runWrangler(["deploy", "--config", config2, ...accessVars(a), "--var", `CLOUDFACT_ORIGIN:${t.origin}`], {
+  const secrets = { CLOUDFACT_SESSION_SECRET: sessionSecret(t.name) };
+  if (t.originKey) secrets.CLOUDFACT_ORIGIN_KEY = t.originKey;
+  const deployOnce = (a) => deployWithSecrets(["deploy", "--config", config2, ...accessVars(a), "--var", `CLOUDFACT_ORIGIN:${t.origin}`], secrets, {
     cfg,
     creds,
     cwd: workerDir,
@@ -1386,11 +1521,6 @@ ${r.text.slice(-800)}`);
     r = deployOnce(access);
     if (r.status !== 0) throw new Error(`wrangler deploy failed:
 ${r.text.slice(-1500)}`);
-  }
-  if (t.originKey) {
-    const s = putSecret(t.name, "CLOUDFACT_ORIGIN_KEY", t.originKey, { cwd: workerDir, logFile });
-    if (s.status !== 0) throw new Error(`wrangler secret put failed:
-${s.text.slice(-800)}`);
   }
   return { url, access };
 }

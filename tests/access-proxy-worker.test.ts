@@ -3,45 +3,30 @@ import path from 'node:path';
 import { webcrypto } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PROXY_WORKER_SOURCE } from '../src/backends/workers/proxy-worker.js';
+import { AUD, SESSION_SECRET, TEAM, claims, cookieOf, jwt, login, rsa } from './access-helpers.js';
 import { tmpDir } from './helpers.js';
 
-const TEAM = 'team.cloudflareaccess.com';
-const AUD = 'aud-123';
 const ORIGIN = 'https://tunnel.trycloudflare.com';
 const ORIGIN_KEY = 'origin-key-abc';
-const b64url = (data: string | Uint8Array) => Buffer.from(data).toString('base64url');
-
-async function jwt(privateKey: CryptoKey, kid: string, payload: Record<string, unknown>): Promise<string> {
-  const head = b64url(JSON.stringify({ alg: 'RS256', kid, typ: 'JWT' }));
-  const body = b64url(JSON.stringify(payload));
-  const sig = await webcrypto.subtle.sign({ name: 'RSASSA-PKCS1-v1_5' }, privateKey, new TextEncoder().encode(`${head}.${body}`));
-  return `${head}.${body}.${b64url(new Uint8Array(sig))}`;
-}
-
-const rsa = () =>
-  webcrypto.subtle.generateKey(
-    { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
-    true,
-    ['sign', 'verify'],
-  );
 
 describe('access proxy worker', () => {
   let dir: string;
   let worker: { fetch: (req: Request, env: unknown) => Promise<Response> };
   let keys: Awaited<ReturnType<typeof rsa>>;
   let origins: { url: string; headers: Headers }[] = [];
-  const now = () => Math.floor(Date.now() / 1000);
-  const claims = () => ({ aud: [AUD], iss: `https://${TEAM}`, exp: now() + 600, nbf: now() - 60, email: 'ana@example.com' });
   const env = {
     CLOUDFACT_ACCESS: '1',
     CLOUDFACT_ACCESS_AUD: AUD,
     CLOUDFACT_ACCESS_TEAM: TEAM,
+    CLOUDFACT_ACCESS_EMAILS: 'ana@example.com',
+    CLOUDFACT_SESSION_SECRET: SESSION_SECRET,
     CLOUDFACT_ORIGIN: ORIGIN,
     CLOUDFACT_ORIGIN_KEY: ORIGIN_KEY,
   };
   const call = async (headers: Record<string, string> = {}, e: unknown = env, url = 'https://app.example.workers.dev/painel?a=1') =>
     worker.fetch(new Request(url, { headers }), e);
-  const signedIn = async () => ({ 'cf-access-jwt-assertion': await jwt(keys.privateKey, 'k1', claims()) });
+  let session = '';
+  const signedIn = async () => ({ cookie: session });
 
   beforeAll(async () => {
     dir = tmpDir();
@@ -63,16 +48,22 @@ describe('access proxy worker', () => {
         throw new TypeError('fetch failed'); // an unreachable origin throws, it does not answer
       }),
     );
+    session = cookieOf(
+      await login(worker as never, env, await jwt(keys.privateKey, 'k1', claims()), 'remember=1', 'https://app.example.workers.dev'),
+    );
   });
   afterAll(() => {
     vi.unstubAllGlobals();
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('refuses a request with no Access token and never touches the origin', async () => {
+  it('without a session: the sign-in page for a page load, 401 otherwise, and never the origin', async () => {
     origins = [];
-    const res = await call();
-    expect(res.status).toBe(403);
+    const res = await call({ accept: 'text/html' });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('<input type="hidden" name="next" value="/painel?a=1">');
+    expect((await call()).status).toBe(401);
+    expect((await call({ 'cf-access-jwt-assertion': await jwt(keys.privateKey, 'k1', claims()) })).status).toBe(401);
     expect(origins).toHaveLength(0);
   });
 
@@ -85,17 +76,24 @@ describe('access proxy worker', () => {
     expect(res.headers.get('cache-control')).toBe('private, no-cache');
   });
 
-  it('swaps the visitor cookies for the origin key and drops the Access assertion', async () => {
+  it('swaps the visitor cookies (the session included) for the origin key and drops the Access assertion', async () => {
     origins = [];
-    await call({ ...(await signedIn()), cookie: 'CF_Authorization=abc; other=1' });
+    await call({ cookie: `CF_Authorization=abc; other=1; ${session}`, 'cf-access-jwt-assertion': 'x' });
     expect(origins[0].headers.get('cookie')).toBe(`cloudfact_access=${ORIGIN_KEY}`);
     expect(origins[0].headers.get('cf-access-jwt-assertion')).toBeNull();
   });
 
-  it('rejects a forged token', async () => {
+  it('mints no session from a forged token', async () => {
     const other = await rsa();
-    const res = await call({ 'cf-access-jwt-assertion': await jwt(other.privateKey, 'k1', claims()) });
+    const res = await login(
+      worker as never,
+      env,
+      await jwt(other.privateKey, 'k1', claims()),
+      'remember=1',
+      'https://app.example.workers.dev',
+    );
     expect(res.status).toBe(403);
+    expect(res.headers.get('set-cookie')).toBeNull();
   });
 
   it('fails closed with no Access config and reports a missing origin', async () => {

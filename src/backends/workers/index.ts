@@ -1,4 +1,5 @@
 /** "workers" backend: Cloudflare Workers with static assets (the successor of Pages). Fixed *.workers.dev URL. */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { readConfig } from '../../config.js';
@@ -31,6 +32,29 @@ export interface WorkersTarget {
 
 /** Secrets that make up the switch; dropped again when a catalog is republished without it. */
 const CONTROL_SECRETS = ['CLOUDFACT_API_TOKEN', 'CLOUDFACT_CONTROL_TARGETS'];
+
+/**
+ * The key behind the site's own sign-in cookie: made once per deploy and kept in its state, so a redeploy
+ * (the catalog republishes itself on every deploy) does not sign anyone out. A new key signs everyone out.
+ */
+function sessionSecret(name: string): string {
+  const s = readState(name);
+  if (s?.sessionSecret) return s.sessionSecret;
+  const secret = crypto.randomBytes(32).toString('base64url');
+  if (s) writeState(name, { ...s, sessionSecret: secret });
+  return secret;
+}
+
+/** `wrangler deploy` with secrets shipped in the same version; on disk only for the length of the deploy. */
+function deployWithSecrets(args: string[], values: Record<string, string>, opts: Parameters<typeof runWrangler>[1] & { cwd: string }) {
+  const file = path.join(opts.cwd, '.deploy-secrets.json');
+  fs.writeFileSync(file, JSON.stringify(values), { mode: 0o600 });
+  try {
+    return runWrangler([...args, '--secrets-file', file], opts);
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
+}
 
 /** Copies `src` into `dst` skipping dotfiles, node_modules and symlinks. Returns the file count. */
 export function stageDir(src: string, dst: string): number {
@@ -98,21 +122,17 @@ export async function deployWorkers(t: WorkersTarget): Promise<DeployResult> {
   const accessCtx = t.access?.length ? accessContext(cfg) : null; // validates the token before touching anything
   // the switch only ever sits behind Access sign-in, never behind a key link or on an open page
   const control = accessCtx ? (t.control ?? null) : null;
-  /** The gate Worker in Access mode; with the switch, its secrets ship with this very version. */
+  /** The gate Worker in Access mode: its sign-in key, and the switch's secrets when it has one, ship with this very version. */
   const deployAccessWorker = (app: AccessApp) => {
     const workerDir = path.join(dir, 'worker');
     const args = ['deploy', '--config', path.join(workerDir, 'wrangler.jsonc'), ...accessVars(app)];
-    if (!control) return runWrangler(args, { cfg, creds, cwd: workerDir, logFile });
-    // on disk only for the length of the deploy, inside the deploy's 0700 directory
-    const secrets = path.join(workerDir, '.control-secrets.json');
-    const values = { CLOUDFACT_API_TOKEN: control.token, CLOUDFACT_CONTROL_TARGETS: JSON.stringify(control.targets) };
-    fs.writeFileSync(secrets, JSON.stringify(values), { mode: 0o600 });
-    try {
-      const vars = ['--var', 'CLOUDFACT_CONTROL:1', '--var', `CLOUDFACT_ACCOUNT_ID:${control.accountId}`];
-      return runWrangler([...args, ...vars, '--secrets-file', secrets], { cfg, creds, cwd: workerDir, logFile });
-    } finally {
-      fs.rmSync(secrets, { force: true });
+    const values: Record<string, string> = { CLOUDFACT_SESSION_SECRET: sessionSecret(t.name) };
+    if (control) {
+      values.CLOUDFACT_API_TOKEN = control.token;
+      values.CLOUDFACT_CONTROL_TARGETS = JSON.stringify(control.targets);
+      args.push('--var', 'CLOUDFACT_CONTROL:1', '--var', `CLOUDFACT_ACCOUNT_ID:${control.accountId}`);
     }
+    return deployWithSecrets(args, values, { cfg, creds, cwd: workerDir, logFile });
   };
   if (accessCtx) {
     // The Access app (and its AUD) must exist before the Worker goes live: the gate Worker verifies the
@@ -263,8 +283,10 @@ export async function deployAccessProxy(t: AccessProxyTarget): Promise<{ url: st
   fs.writeFileSync(path.join(workerDir, 'wrangler.jsonc'), proxyWranglerConfig(t.name, compatibilityDate));
   const logFile = path.join(dir, 'wrangler.log');
   const config = path.join(workerDir, 'wrangler.jsonc');
+  const secrets: Record<string, string> = { CLOUDFACT_SESSION_SECRET: sessionSecret(t.name) };
+  if (t.originKey) secrets.CLOUDFACT_ORIGIN_KEY = t.originKey;
   const deployOnce = (a: AccessApp) =>
-    runWrangler(['deploy', '--config', config, ...accessVars(a), '--var', `CLOUDFACT_ORIGIN:${t.origin}`], {
+    deployWithSecrets(['deploy', '--config', config, ...accessVars(a), '--var', `CLOUDFACT_ORIGIN:${t.origin}`], secrets, {
       cfg,
       creds,
       cwd: workerDir,
@@ -285,10 +307,6 @@ export async function deployAccessProxy(t: AccessProxyTarget): Promise<{ url: st
     access = await upsertAccessApp(ctx, { name: t.name, domain: new URL(url).host, emails: t.emails });
     r = deployOnce(access);
     if (r.status !== 0) throw new Error(`wrangler deploy failed:\n${r.text.slice(-1500)}`);
-  }
-  if (t.originKey) {
-    const s = putSecret(t.name, 'CLOUDFACT_ORIGIN_KEY', t.originKey, { cwd: workerDir, logFile });
-    if (s.status !== 0) throw new Error(`wrangler secret put failed:\n${s.text.slice(-800)}`);
   }
   return { url, access };
 }

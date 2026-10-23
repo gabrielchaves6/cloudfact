@@ -1,51 +1,34 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { webcrypto } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WORKER_SOURCE } from '../src/backends/workers/gate-worker.js';
+import { AUD, SESSION_SECRET, TEAM, claims, cookieOf, jwt, login, rsa } from './access-helpers.js';
 import { tmpDir } from './helpers.js';
 
-const TEAM = 'team.cloudflareaccess.com';
-const AUD = 'aud-123';
-const b64url = (data: string | Uint8Array) => Buffer.from(data).toString('base64url');
-
-async function jwt(privateKey: CryptoKey, kid: string, payload: Record<string, unknown>): Promise<string> {
-  const head = b64url(JSON.stringify({ alg: 'RS256', kid, typ: 'JWT' }));
-  const body = b64url(JSON.stringify(payload));
-  const sig = await webcrypto.subtle.sign({ name: 'RSASSA-PKCS1-v1_5' }, privateKey, new TextEncoder().encode(`${head}.${body}`));
-  return `${head}.${body}.${b64url(new Uint8Array(sig))}`;
-}
-
-const rsa = () =>
-  webcrypto.subtle.generateKey(
-    { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
-    true,
-    ['sign', 'verify'],
-  );
-
-describe('gate worker in Access mode verifies the Access JWT', () => {
+describe('gate worker in Access mode: Access on the sign-in path, then its own "Remember me" cookie', () => {
   let dir: string;
   let worker: { fetch: (req: Request, env: unknown, ctx: unknown) => Promise<Response> };
   let keys: Awaited<ReturnType<typeof rsa>>;
   let other: Awaited<ReturnType<typeof rsa>>;
   let certsFetches = 0;
-  const now = () => Math.floor(Date.now() / 1000);
-  const claims = (over: Record<string, unknown> = {}) => ({
-    aud: [AUD],
-    iss: `https://${TEAM}`,
-    exp: now() + 600,
-    nbf: now() - 60,
-    email: 'ana@example.com',
-    ...over,
-  });
+  let assetFetches = 0;
   const env = {
     CLOUDFACT_ACCESS: '1',
     CLOUDFACT_ACCESS_AUD: AUD,
     CLOUDFACT_ACCESS_TEAM: TEAM,
-    ASSETS: { fetch: async () => new Response('secret page', { headers: { 'content-type': 'text/html' } }) },
+    CLOUDFACT_ACCESS_EMAILS: 'ana@example.com,bob@example.com',
+    CLOUDFACT_SESSION_SECRET: SESSION_SECRET,
+    ASSETS: {
+      fetch: async () => {
+        assetFetches += 1;
+        return new Response('secret page', { headers: { 'content-type': 'text/html' } });
+      },
+    },
   };
-  const call = (headers: Record<string, string> = {}, e: unknown = env) =>
-    worker.fetch(new Request('https://site.example.workers.dev/', { headers }), e, {});
+  const page = (headers: Record<string, string> = {}, e: unknown = env, p = '/') =>
+    worker.fetch(new Request('https://site.example.workers.dev' + p, { headers: { accept: 'text/html', ...headers } }), e, {});
+  const token = (over: Record<string, unknown> = {}) => jwt(keys.privateKey, 'k1', claims(over));
 
   beforeAll(async () => {
     dir = tmpDir();
@@ -66,52 +49,165 @@ describe('gate worker in Access mode verifies the Access JWT', () => {
       }),
     );
   });
+  afterEach(() => vi.useRealTimers());
   afterAll(() => {
     vi.unstubAllGlobals();
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('refuses a request without an Access token', async () => {
-    const res = await call();
-    expect(res.status).toBe(403);
-    expect(await res.text()).toMatch(/protected by Cloudflare Access/);
-  });
-
-  it('serves the assets for a valid token in the header, with private caching', async () => {
-    const res = await call({ 'cf-access-jwt-assertion': await jwt(keys.privateKey, 'k1', claims()) });
+  it('shows the sign-in page, with "Remember me" ticked, to a visitor without a session', async () => {
+    assetFetches = 0;
+    const res = await page({}, env, '/painel?a=1');
     expect(res.status).toBe(200);
-    expect(await res.text()).toBe('secret page');
-    expect(res.headers.get('cache-control')).toBe('private, no-cache');
-    expect(res.headers.get('x-robots-tag')).toBe('noindex, nofollow');
+    const html = await res.text();
+    expect(html).toContain('<form method="get" action="/.cloudfact/login">');
+    expect(html).toContain('name="remember" value="1" checked>Remember me');
+    expect(html).toContain('<input type="hidden" name="next" value="/painel?a=1">');
+    expect(html).toContain('<h1>site</h1>');
+    expect(html).not.toMatch(/<script/);
+    expect(assetFetches).toBe(0);
   });
 
-  it('accepts the CF_Authorization cookie and caches the team keys', async () => {
+  it('speaks Portuguese to a Portuguese browser', async () => {
+    const html = await (await page({ 'accept-language': 'pt-BR,pt;q=0.9,en;q=0.8' })).text();
+    expect(html).toContain('lang="pt"');
+    expect(html).toContain('Lembrar meu login');
+    expect(html).toContain('>Entrar</button>');
+  });
+
+  it('answers 401, not a page, to a request that is not a page load', async () => {
+    const res = await worker.fetch(new Request('https://site.example.workers.dev/data.json'), env, {});
+    expect(res.status).toBe(401);
+  });
+
+  it('does not take an Access token outside the sign-in path: only the session cookie lets one in', async () => {
+    assetFetches = 0;
+    const res = await page({ 'cf-access-jwt-assertion': await token() });
+    expect(await res.text()).toContain('action="/.cloudfact/login"');
+    expect(assetFetches).toBe(0);
+  });
+
+  it('remembered: signs in through Access, sets a 400-day cookie and serves the site with it', async () => {
+    const res = await login(worker, env, await token(), 'remember=1&next=%2Fpainel%3Fa%3D1');
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/painel?a=1');
+    const set = res.headers.get('set-cookie')!;
+    expect(set).toMatch(/^cloudfact_session=[\w-]+\.[\w-]+; Path=\/; HttpOnly; Secure; SameSite=Lax; Max-Age=34560000$/);
+    const ok = await page({ cookie: `foo=bar; ${cookieOf(res)}` });
+    expect(ok.status).toBe(200);
+    expect(await ok.text()).toBe('secret page');
+    expect(ok.headers.get('cache-control')).toBe('private, no-cache');
+    expect(ok.headers.get('x-robots-tag')).toBe('noindex, nofollow');
+    expect(ok.headers.get('set-cookie')).toBeNull(); // fresh: nothing to renew
+  });
+
+  it('not remembered: a cookie that ends with the browser, and with the day', async () => {
+    const res = await login(worker, env, await token(), 'next=%2F');
+    const set = res.headers.get('set-cookie')!;
+    expect(set).not.toContain('Max-Age');
+    expect((await page({ cookie: cookieOf(res) })).status).toBe(200);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 25 * 3600 * 1000);
+    expect(await (await page({ cookie: cookieOf(res) })).text()).toContain('action="/.cloudfact/login"');
+  });
+
+  it('a remembered browser stays signed in: after a day its cookie is pushed forward', async () => {
+    const res = await login(worker, env, await token());
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 300 * 86400 * 1000); // well past Access's own session
+    const ok = await page({ cookie: cookieOf(res) });
+    expect(ok.status).toBe(200);
+    const renewed = ok.headers.get('set-cookie')!;
+    expect(renewed).toMatch(/Max-Age=34560000$/);
+    vi.setSystemTime(Date.now() + 300 * 86400 * 1000); // 600 days after signing in, used in between
+    expect((await page({ cookie: renewed.split(';')[0] })).status).toBe(200);
+  });
+
+  it('accepts the CF_Authorization cookie on the sign-in path and caches the team keys', async () => {
     const before = certsFetches;
-    const res = await call({ cookie: `foo=bar; CF_Authorization=${await jwt(keys.privateKey, 'k1', claims())}` });
-    expect(res.status).toBe(200);
-    expect(certsFetches).toBe(before); // keys cached from the previous request
+    const res = await worker.fetch(
+      new Request('https://site.example.workers.dev/.cloudfact/login?remember=1', {
+        headers: { cookie: `CF_Authorization=${await token()}` },
+      }),
+      env,
+      {},
+    );
+    expect(res.status).toBe(303);
+    expect(certsFetches).toBe(before); // keys cached from the previous requests
   });
 
-  it('rejects the wrong audience, another team, expired and forged tokens', async () => {
+  it('mints nothing for the wrong audience, another team, an expired or forged token, or an email not on the list', async () => {
     const cases = [
-      await jwt(keys.privateKey, 'k1', claims({ aud: ['someone-else'] })),
-      await jwt(keys.privateKey, 'k1', claims({ iss: 'https://evil.cloudflareaccess.com' })),
-      await jwt(keys.privateKey, 'k1', claims({ exp: now() - 1 })),
+      await token({ aud: ['someone-else'] }),
+      await token({ iss: 'https://evil.cloudflareaccess.com' }),
+      await token({ exp: Math.floor(Date.now() / 1000) - 1 }),
       await jwt(other.privateKey, 'k1', claims()), // right kid, wrong key
+      await token({ email: 'eve@example.com' }),
       'not.a.jwt',
     ];
-    for (const token of cases) expect((await call({ 'cf-access-jwt-assertion': token })).status).toBe(403);
+    for (const t of cases) {
+      const res = await login(worker, env, t);
+      expect(res.status).toBe(403);
+      expect(res.headers.get('set-cookie')).toBeNull();
+    }
+    const none = await worker.fetch(new Request('https://site.example.workers.dev/.cloudfact/login?remember=1'), env, {});
+    expect(none.status).toBe(403);
   });
 
   it('refreshes the keys once for an unknown kid, then refuses', async () => {
     const before = certsFetches;
-    const res = await call({ 'cf-access-jwt-assertion': await jwt(other.privateKey, 'rotated', claims()) });
+    const res = await login(worker, env, await jwt(other.privateKey, 'rotated', claims()));
     expect(res.status).toBe(403);
     expect(certsFetches).toBe(before + 1);
   });
 
+  it('refuses a forged, re-signed or replayed cookie', async () => {
+    const good = cookieOf(await login(worker, env, await token()));
+    const [name, value] = good.split('=');
+    const [body, sig] = value.split('.');
+    const claimsOf = JSON.parse(Buffer.from(body, 'base64url').toString()) as Record<string, unknown>;
+    const forgedBody = Buffer.from(JSON.stringify({ ...claimsOf, e: 'bob@example.com' })).toString('base64url');
+    const cases = [
+      `${name}=${forgedBody}.${sig}`, // claims changed, old signature
+      `${name}=${body}.${sig.slice(0, -2)}AA`, // signature tampered
+      `${name}=${body}`, // no signature
+    ];
+    for (const cookie of cases) expect(await (await page({ cookie })).text()).toContain('action="/.cloudfact/login"');
+    // another key (a site that rotated it, or another site), another app, or the email taken off the list
+    for (const e of [
+      { ...env, CLOUDFACT_SESSION_SECRET: 'another-secret' },
+      { ...env, CLOUDFACT_ACCESS_AUD: 'another-app' },
+      { ...env, CLOUDFACT_ACCESS_EMAILS: 'bob@example.com' },
+    ])
+      expect(await (await page({ cookie: good }, e)).text()).toContain('action="/.cloudfact/login"');
+  });
+
+  it('only sends the visitor back to a path on this site', async () => {
+    const t = await token();
+    const where = async (next: string) => (await login(worker, env, t, `next=${encodeURIComponent(next)}`)).headers.get('location');
+    expect(await where('/painel?a=1#x')).toBe('/painel?a=1#x');
+    for (const next of [
+      '//evil.example',
+      'https://evil.example/',
+      '/\\evil.example',
+      '/.cloudfact/login',
+      'painel',
+      '/a\r\nset-cookie: x=1',
+    ])
+      expect(await where(next)).toBe('/');
+  });
+
+  it('signs out: drops the cookie and ends the Access session', async () => {
+    const res = await page({}, env, '/.cloudfact/logout');
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('/cdn-cgi/access/logout');
+    expect(res.headers.get('set-cookie')).toBe('cloudfact_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
+  });
+
   it('fails closed when the app is not configured yet', async () => {
-    const res = await call({ 'cf-access-jwt-assertion': await jwt(keys.privateKey, 'k1', claims()) }, { ...env, CLOUDFACT_ACCESS_AUD: '' });
-    expect(res.status).toBe(503);
+    expect((await login(worker, { ...env, CLOUDFACT_ACCESS_AUD: '' }, await token())).status).toBe(503);
+    expect((await login(worker, { ...env, CLOUDFACT_SESSION_SECRET: '' }, await token())).status).toBe(503);
+    const res = await login(worker, { ...env, CLOUDFACT_ACCESS_EMAILS: '' }, await token());
+    expect(res.status).toBe(403); // nobody on the list: nobody gets a session
   });
 });

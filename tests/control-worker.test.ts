@@ -3,6 +3,7 @@ import path from 'node:path';
 import { webcrypto } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WORKER_SOURCE } from '../src/backends/workers/gate-worker.js';
+import { SESSION_SECRET, cookieOf, login } from './access-helpers.js';
 import { tmpDir } from './helpers.js';
 
 const TEAM = 'team.cloudflareaccess.com';
@@ -14,6 +15,7 @@ describe('the catalog Worker switches deploys off and on', () => {
   let dir: string;
   let worker: { fetch: (req: Request, env: unknown, ctx: unknown) => Promise<Response> };
   let token: string;
+  let session: string;
   let tags: Record<string, string[]>;
   let subdomain: Record<string, unknown>;
   let tunnelCalls: { url: string; auth: string | null; body: unknown }[];
@@ -24,6 +26,8 @@ describe('the catalog Worker switches deploys off and on', () => {
     CLOUDFACT_ACCESS: '1',
     CLOUDFACT_ACCESS_AUD: AUD,
     CLOUDFACT_ACCESS_TEAM: TEAM,
+    CLOUDFACT_ACCESS_EMAILS: 'owner@example.com',
+    CLOUDFACT_SESSION_SECRET: SESSION_SECRET,
     CLOUDFACT_CONTROL: '1',
     CLOUDFACT_ACCOUNT_ID: 'acc123',
     CLOUDFACT_API_TOKEN: 'api-token',
@@ -37,7 +41,7 @@ describe('the catalog Worker switches deploys off and on', () => {
     worker.fetch(
       new Request(ORIGIN + p, {
         method: init.method ?? 'GET',
-        headers: { 'cf-access-jwt-assertion': token, 'x-cloudfact': '1', ...init.headers },
+        headers: { cookie: session, 'x-cloudfact': '1', ...init.headers },
         body: init.body === undefined ? undefined : JSON.stringify(init.body),
       }),
       e,
@@ -99,6 +103,7 @@ describe('the catalog Worker switches deploys off and on', () => {
         return json(tags[m[1]]);
       }),
     );
+    session = cookieOf(await login(worker, env, token, 'remember=1', ORIGIN));
   });
   beforeEach(() => {
     tags = { site: ['cloudfact', 'cloudfact:vis:private'], cloudfacts: ['cloudfact', 'cloudfact:catalog'], other: [] };
@@ -112,9 +117,10 @@ describe('the catalog Worker switches deploys off and on', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('is behind the Access check like everything else', async () => {
-    const res = await call('/.cloudfact/state', { headers: { 'cf-access-jwt-assertion': '' } });
-    expect(res.status).toBe(403);
+  it('is behind the sign-in like everything else', async () => {
+    expect(session).toMatch(/^cloudfact_session=/);
+    const res = await call('/.cloudfact/state', { headers: { cookie: '', 'cf-access-jwt-assertion': token } });
+    expect(res.status).toBe(401);
   });
 
   it('refuses a request that did not come from this page', async () => {

@@ -29,6 +29,8 @@ export interface DeployState {
   off?: boolean;
   /** Secret for the tunnel host's on/off switch. Never part of a link; never returned (see summarize()). */
   controlKey?: string | null;
+  /** Key that signs the site's own sign-in cookie behind Access. Never returned (see summarize()). */
+  sessionSecret?: string | null;
   error?: string | null;
   // tunnel
   hostPid?: number | null;
@@ -61,8 +63,8 @@ export interface DeployState {
   control?: boolean;
 }
 
-/** State without the private key (privateUrl already carries it) and without the switch's key. */
-export type DeploySummary = Omit<DeployState, 'key' | 'controlKey'>;
+/** State without the private key (privateUrl already carries it), the switch's key and the sign-in key. */
+export type DeploySummary = Omit<DeployState, 'key' | 'controlKey' | 'sessionSecret'>;
 
 export interface SshTarget {
   /** user@host or host */

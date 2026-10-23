@@ -50,21 +50,32 @@ describe('Cloudflare Access', () => {
     expect(api.state.idps.map((i) => i.type)).toEqual(['onetimepin']);
     const app = api.state.apps[0].body as { type: string; domain: string; policies: { include: { email: { email: string } }[] }[] };
     expect(app.type).toBe('self_hosted');
-    expect(app.domain).toBe('team-site.example-sub.workers.dev');
+    expect(app.domain).toBe('team-site.example-sub.workers.dev/.cloudfact/login'); // Access guards the sign-in path only
     expect(app.policies[0].include.map((i) => i.email.email)).toEqual(['ana@example.com', 'bob@example.com']);
     const log = fs.readFileSync(path.join(home, 'wrangler.log'), 'utf8');
     expect(log).toContain(
-      '--var CLOUDFACT_ACCESS:1 --var CLOUDFACT_ACCESS_AUD:aud-1 --var CLOUDFACT_ACCESS_TEAM:cloudfact-acc123.cloudflareaccess.com',
+      '--var CLOUDFACT_ACCESS:1 --var CLOUDFACT_ACCESS_AUD:aud-1 --var CLOUDFACT_ACCESS_TEAM:cloudfact-acc123.cloudflareaccess.com --var CLOUDFACT_ACCESS_EMAILS:ana@example.com,bob@example.com',
     );
     expect(log).not.toContain('secret put');
+    // the sign-in key ships with the version, is kept for the next deploy and never leaves in a summary
+    const shipped = JSON.parse(fs.readFileSync(path.join(home, 'wrangler.log.secrets'), 'utf8')) as Record<string, string>;
+    const kept = JSON.parse(fs.readFileSync(path.join(home, 'deploys', 'team-site', 'state.json'), 'utf8')) as { sessionSecret: string };
+    expect(shipped.CLOUDFACT_SESSION_SECRET).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(kept.sessionSecret).toBe(shipped.CLOUDFACT_SESSION_SECRET);
+    expect(JSON.stringify(r)).not.toContain(shipped.CLOUDFACT_SESSION_SECRET);
+    expect(fs.readdirSync(path.join(home, 'deploys', 'team-site', 'worker'))).not.toContain('.deploy-secrets.json');
     expect(log.split('\n').filter((l) => l.startsWith('deploy'))).toHaveLength(1); // app created first: no second deploy needed
   });
 
   it('redeploy updates the existing app (PUT) instead of creating another', async () => {
     const { deploy } = await import('../src/cloudfact.js');
+    const before = JSON.parse(fs.readFileSync(path.join(home, 'wrangler.log.secrets'), 'utf8')) as Record<string, string>;
     await deploy({ path: site, name: 'team-site', backend: 'workers', access: ['carol@example.com'] });
     expect(api.state.apps).toHaveLength(1);
     expect(api.calls.filter((c) => c.method === 'PUT' && c.path.includes('/access/apps/'))).toHaveLength(1);
+    // same sign-in key: a redeploy signs nobody out
+    const after = JSON.parse(fs.readFileSync(path.join(home, 'wrangler.log.secrets'), 'utf8')) as Record<string, string>;
+    expect(after.CLOUDFACT_SESSION_SECRET).toBe(before.CLOUDFACT_SESSION_SECRET);
   });
 
   it('remove deletes the worker and the access app', async () => {

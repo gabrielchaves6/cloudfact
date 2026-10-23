@@ -114,7 +114,14 @@ export interface UpsertAppOptions {
   sessionDuration?: string;
 }
 
-/** Self-hosted Access application for `domain` allowing exactly `emails`. Idempotent by domain. */
+/** The one path Cloudflare Access guards on a cloudfact site; the Worker answers everything else (session-js.ts). */
+export const LOGIN_PATH = '/.cloudfact/login';
+
+/**
+ * Self-hosted Access application allowing exactly `emails`, on `domain`'s sign-in path only: past it, the
+ * site's Worker keeps the visitor signed in with its own cookie ("Remember me"). Idempotent by hostname; an
+ * app from before, on the whole hostname, is narrowed to the path.
+ */
 export async function upsertAccessApp(ctx: AccessContext, opts: UpsertAppOptions): Promise<AccessApp> {
   const teamDomain = await ensureOrganization(ctx);
   await ensureOtpProvider(ctx);
@@ -123,7 +130,7 @@ export async function upsertAccessApp(ctx: AccessContext, opts: UpsertAppOptions
   if (!emails.length) throw new Error('--access needs at least one email');
   const body = {
     name: `cloudfact: ${opts.name}`,
-    domain: opts.domain,
+    domain: opts.domain + LOGIN_PATH,
     type: 'self_hosted',
     session_duration: opts.sessionDuration ?? '24h',
     auto_redirect_to_identity: true,
@@ -131,7 +138,7 @@ export async function upsertAccessApp(ctx: AccessContext, opts: UpsertAppOptions
     policies: [{ name: 'cloudfact allow list', decision: 'allow', include: emails.map((email) => ({ email: { email } })) }],
   };
   const existing = (await ctx.client.request<{ id: string; domain: string }[]>('GET', `${base}?per_page=100`)).find(
-    (a) => a.domain === opts.domain,
+    (a) => a.domain === opts.domain || a.domain === opts.domain + LOGIN_PATH,
   );
   const app = existing
     ? await ctx.client.request<{ id: string; aud: string }>('PUT', `${base}/${existing.id}`, body)
@@ -147,9 +154,18 @@ export async function workersSubdomain(ctx: AccessContext): Promise<string> {
   return r.subdomain;
 }
 
-/** Worker vars that let the gate Worker verify Access JWTs for this app. */
-export function accessVars(app: Pick<AccessApp, 'aud' | 'teamDomain'>): string[] {
-  return ['--var', 'CLOUDFACT_ACCESS:1', '--var', `CLOUDFACT_ACCESS_AUD:${app.aud}`, '--var', `CLOUDFACT_ACCESS_TEAM:${app.teamDomain}`];
+/** Worker vars that let the gate Worker verify Access JWTs for this app, and who its own sign-in admits. */
+export function accessVars(app: Pick<AccessApp, 'aud' | 'teamDomain' | 'emails'>): string[] {
+  return [
+    '--var',
+    'CLOUDFACT_ACCESS:1',
+    '--var',
+    `CLOUDFACT_ACCESS_AUD:${app.aud}`,
+    '--var',
+    `CLOUDFACT_ACCESS_TEAM:${app.teamDomain}`,
+    '--var',
+    `CLOUDFACT_ACCESS_EMAILS:${app.emails.join(',')}`,
+  ];
 }
 
 export async function deleteAccessApp(ctx: AccessContext, appId: string): Promise<void> {
