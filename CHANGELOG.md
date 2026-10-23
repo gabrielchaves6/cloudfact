@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Fixed
+
+- Sign-in pages: Access turns away bursts of code requests from Workers for about a minute; a refused request now gets one more try 1.5 s later before the page offers the official way in.
+
 ## [0.11.0] - 2026-10-22
 
 ### Changed

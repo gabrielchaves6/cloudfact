@@ -17,7 +17,7 @@ describe('sign-in pages in front of Access: email, then code, with the one-time 
   let foreignToken: string;
   let calls: { url: string; body: URLSearchParams }[];
   /** How the fake Access behaves for the next calls. */
-  let mode: { emailStep: 'ok' | 'down'; success: 'token' | 'foreign' | 'elsewhere' };
+  let mode: { emailStep: 'ok' | 'down' | 'once'; success: 'token' | 'foreign' | 'elsewhere' };
   let allowed: boolean;
   const env = {
     CLOUDFACT_ACCESS: '1',
@@ -60,6 +60,10 @@ describe('sign-in pages in front of Access: email, then code, with the one-time 
         calls.push({ url, body });
         if (url.startsWith(`https://${TEAM}/cdn-cgi/access/verify-code/${HOST}?`)) {
           if (mode.emailStep === 'down') return new Response('oops', { status: 500 });
+          if (mode.emailStep === 'once') {
+            mode.emailStep = 'ok'; // turned away once, like Access does with a burst
+            return new Response('slow down', { status: 429 });
+          }
           return redirect(`https://${TEAM}/cdn-cgi/access/verify-code/${HOST}?kid=${AUD}&nonce=${NONCE}`);
         }
         if (url === `https://${TEAM}/cdn-cgi/access/callback`) {
@@ -147,6 +151,14 @@ describe('sign-in pages in front of Access: email, then code, with the one-time 
     res = await post('/.cloudfact/code', { code: CODE, nonce: NONCE, email: 'ana@example.com', remember: '1', next: '/' });
     expect(res.headers.get('location')).toBe(`https://${TEAM}/cdn-cgi/access/something-new?x=1`);
     expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
+  it('tries once more when Access turns the first request away', async () => {
+    mode.emailStep = 'once';
+    const res = await post('/.cloudfact/email', { email: 'ana@example.com', remember: '1', next: '/' });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain(`value="${NONCE}"`);
+    expect(calls).toHaveLength(2);
   });
 
   it('when Access does not hand out a code, offers the official way in', async () => {

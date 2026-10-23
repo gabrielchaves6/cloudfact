@@ -22002,6 +22002,7 @@ const LOGOUT_PATH = '/.cloudfact/logout';
 const REMEMBER_FOR = 400 * 86400; // the longest a browser keeps a cookie
 const SESSION_FOR = 86400; // not remembered: until the browser closes, and a day at most
 const RENEW_AFTER = 86400; // a remembered sign-in is pushed forward at most once a day
+const REQUEST_RETRY_MS = 1500;
 const PAGE_HTML = ${JSON.stringify(PAGE_HTML)};
 const TEXT = {
   en: { email: 'Email', remember: 'Remember me', send: 'Send code', code: 'Code', signin: 'Sign in', wrong: 'Wrong code',
@@ -22110,15 +22111,22 @@ async function limited(env, request, what) {
   }
 }
 const form = (fields) => ({ method: 'POST', body: new URLSearchParams(fields).toString(), headers: { 'content-type': 'application/x-www-form-urlencoded' }, redirect: 'manual' });
-/** Asks Access to mail a code to \`email\`. Returns the nonce that goes with it, or null. */
+/**
+ * Asks Access to mail a code to \`email\`. Returns the nonce that goes with it, or null. Access turns away
+ * bursts of requests from Workers for about a minute, so a refusal gets one more try a moment later.
+ */
 async function requestCode(env, url, email, next, remember) {
   const team = 'https://' + env.CLOUDFACT_ACCESS_TEAM;
   const target = team + '/cdn-cgi/access/verify-code/' + url.host + '?' + new URLSearchParams({ kid: env.CLOUDFACT_ACCESS_AUD, redirect_url: officialUrl(next, remember) });
-  const res = await fetch(target, form({ email, client_id: '', connector_id: '', connector_type: '', redirect_url: '' }));
-  const location = res.headers.get('location');
-  if (res.status < 300 || res.status > 399 || !location) return null;
-  const nonce = new URL(location, team).searchParams.get('nonce');
-  return nonce && /^[A-Za-z0-9_-]{8,256}$/.test(nonce) ? nonce : null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, REQUEST_RETRY_MS));
+    const res = await fetch(target, form({ email, client_id: '', connector_id: '', connector_type: '', redirect_url: '' }));
+    const location = res.headers.get('location');
+    if (res.status < 300 || res.status > 399 || !location) continue;
+    const nonce = new URL(location, team).searchParams.get('nonce');
+    if (nonce && /^[A-Za-z0-9_-]{8,256}$/.test(nonce)) return nonce;
+  }
+  return null;
 }
 /** Hands the code to Access. { wrong } for a code it refused; { to } where it sends a code it took; null otherwise. */
 async function checkCode(env, code, nonce) {
