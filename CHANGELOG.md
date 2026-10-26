@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-26
+
+### Added
+
+- Sign-in codes by email, without Cloudflare Access: `<key> | cloudfact mail-key [name ...]` gives the deploys behind Access a Resend API key (each Worker's `RESEND_API_KEY` secret, kept through redeploys, never stored on this machine). The page then mails its own code, from `CloudFact <onboarding@resend.dev>` in the CloudFacts look, and checks it in a SQLite-backed Durable Object per site, with the same rules as the private Stash's sign-in: 1-hour codes, 5 tries, single use; 5 asks per 15 minutes and 30 a day per address, 60 per 15 minutes in all; the same answer for any address. Until a key is set, Access mails and checks the code behind the same page, as in 0.11.
+
+### Changed
+
+- The sign-in page works like the Stash's: email ("Get a code", with "Remember me"), then "Check your email" and the code; the request is kept in the browser for an hour, so a reload on the way to the inbox does not lose it. Its routes take JSON from the page itself (`POST /.cloudfact/code`, `POST /.cloudfact/enter`). Signing out goes back to the sign-in page.
+
 ### Fixed
 
 - Sign-in pages: Access turns away bursts of code requests from Workers for about a minute; a refused request now gets one more try 1.5 s later before the page offers the official way in.

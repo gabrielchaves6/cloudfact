@@ -313,6 +313,20 @@ declare function publishCatalog(opts?: {
 declare function rotate(name: string, opts?: {
     expires?: string;
 }): Promise<DeployResult>;
+/**
+ * Gives the sign-in pages of the deploys behind Access their own email: the Resend API key becomes each
+ * Worker's RESEND_API_KEY secret, and the page then mails the code itself (from CloudFact
+ * <onboarding@resend.dev>) and checks it in its own Durable Object, instead of going through Access. The
+ * key comes from the caller (stdin, in the CLI) and is not stored on this machine; the secret outlives
+ * redeploys. Without names, every deploy behind Access.
+ */
+declare function setMailKey(key: string, names?: string[]): {
+    set: string[];
+    failed: {
+        name: string;
+        error: string;
+    }[];
+};
 declare function stop(name: string): Promise<{
     name: string;
     stopped: boolean;
@@ -393,4 +407,4 @@ interface ToolDefinition<Schema extends ZodRawShape = ZodRawShape> {
 
 declare const tools: ToolDefinition<any>[];
 
-export { type Backend, type BackendChoice, type CatalogEntry, type CatalogResult, type ControlTargets, type Credentials, type DeployKind, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type ExposeOptions, type PowerResult, type SshTarget, type StatusResult, type ToolDefinition, VERSION, type Visibility, catalog, catalogHint, createServer, deploy, doctor, expose, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, power, publishCatalog, readLogs, refreshCatalogPage, remove, resolveBackend, rotate, setCredentials, setProject, setupCodex, status, stop, stopAll, summarize, tools, withControl, withLocalSecrets };
+export { type Backend, type BackendChoice, type CatalogEntry, type CatalogResult, type ControlTargets, type Credentials, type DeployKind, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type ExposeOptions, type PowerResult, type SshTarget, type StatusResult, type ToolDefinition, VERSION, type Visibility, catalog, catalogHint, createServer, deploy, doctor, expose, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, power, publishCatalog, readLogs, refreshCatalogPage, remove, resolveBackend, rotate, setCredentials, setMailKey, setProject, setupCodex, status, stop, stopAll, summarize, tools, withControl, withLocalSecrets };

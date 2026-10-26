@@ -445,37 +445,135 @@ async function verifyToken(token, team, aud) {
 `;
 
 // src/backends/workers/session-js.ts
+var PAGE_JS = String.raw`(() => {
+  const PENDING = "cloudfact.loginRequest";
+  const $ = (selector) => document.querySelector(selector);
+  const box = $("#lock"), say = box.dataset;
+  const next = location.pathname + location.search;
+  const pending = {
+    read() { try { const p = JSON.parse(localStorage.getItem(PENDING) || "null"); return p && p.request && p.until > Date.now() ? p : null; } catch { return null; } },
+    save(value) { try { localStorage.setItem(PENDING, JSON.stringify(Object.assign({}, value, { until: Date.now() + 3600000 }))); } catch {} },
+    clear() { try { localStorage.removeItem(PENDING); } catch {} },
+  };
+  async function post(route, payload) {
+    let response;
+    try {
+      response = await fetch("/.cloudfact/" + route, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+                                                        cache: "no-store", credentials: "same-origin", signal: AbortSignal.timeout(30000) });
+    } catch { throw new Error(say.offline); }
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) { const error = new Error(data.error || say.failed); error.official = data.official; throw error; }
+    return data;
+  }
+  let asked = pending.read();
+  function show(step, message) {
+    const code = step === "code";
+    $("#title").textContent = code ? say.check : say.site;
+    $("#hint").textContent = code ? asked.email : ""; $("#hint").hidden = !code;
+    $("#emailForm").hidden = code; $("#codeForm").hidden = !code; $("#back").hidden = !code; $("#official").hidden = true;
+    $("#msg").textContent = message || ""; $("#err").textContent = "";
+    (code ? $("#code") : $("#email")).focus();
+  }
+  async function submit(event, work) {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector("button[type=submit]");
+    button.disabled = true; $("#err").textContent = ""; $("#official").hidden = true;
+    try { await work(); } catch (error) {
+      $("#err").textContent = error.message;
+      if (error.official) { $("#official").href = error.official; $("#official").hidden = false; }
+    }
+    button.disabled = false;
+  }
+  $("#emailForm").addEventListener("submit", (event) => submit(event, async () => {
+    const email = $("#email").value.trim(), remember = $("#remember").checked;
+    const data = await post("code", { email, remember, next });
+    asked = { request: data.request, email, remember };
+    pending.save(asked);
+    $("#codeForm").reset();
+    show("code", data.message);
+  }));
+  $("#codeForm").addEventListener("submit", (event) => submit(event, async () => {
+    $("#msg").textContent = "";
+    const data = await post("enter", { request: asked.request, code: $("#code").value, remember: asked.remember, next });
+    pending.clear();
+    location.replace(data.next);
+    await new Promise(() => {}); // keep the button off while the page opens
+  }));
+  $("#back").addEventListener("click", () => {
+    $("#email").value = (asked && asked.email) || "";
+    pending.clear(); asked = null;
+    show("email");
+  });
+  if (asked) { $("#email").value = asked.email; $("#remember").checked = asked.remember !== false; show("code"); } else show("email");
+})();`;
 var PAGE_HTML = `${PAGE_HEAD.replace('lang="en"', 'lang="{{lang}}"')}<style>
-form{margin:1.4rem auto 0;width:17rem;max-width:100%;text-align:left}
-.field{display:block;font-size:13px;color:#8e8e89;margin:0 0 .35rem}
-input[type=email],input[inputmode=numeric]{box-sizing:border-box;width:100%;padding:.7rem .8rem;border:1px solid #2c2c2a;
+#lock{width:17rem;max-width:100%}
+form{margin:1.2rem auto 0;text-align:left}
+label.field{display:block;font-size:13px;color:#8e8e89;margin:0 0 .35rem}
+input[type=email],#code{box-sizing:border-box;width:100%;padding:.7rem .8rem;border:1px solid #2c2c2a;
 border-radius:10px;background:#161615;color:#f4f4f1;font:inherit;outline:none}
-input[inputmode=numeric]{font-size:22px;letter-spacing:.35em;text-align:center}
-input[type=email]:focus,input[inputmode=numeric]:focus{border-color:#8e8e89}
+#code{font-size:24px;font-weight:600;letter-spacing:.3em;text-align:center}
+input[type=email]:focus,#code:focus{border-color:#8e8e89}
+input:-webkit-autofill{-webkit-box-shadow:0 0 0 40px #161615 inset;-webkit-text-fill-color:#f4f4f1;caret-color:#f4f4f1}
 .check{display:flex;gap:.6rem;align-items:center;font-size:15px;color:#d6d6d1;cursor:pointer;padding:.7rem 0 0}
 input[type=checkbox]{width:18px;height:18px;margin:0;accent-color:#f4f4f1}
-button{margin-top:1rem;width:100%;padding:.75rem 1rem;border:0;border-radius:10px;background:#f4f4f1;color:#0d0d0d;
-font:inherit;font-weight:500;cursor:pointer}button:focus-visible{outline:2px solid #f4f4f1;outline-offset:3px}
-.state{margin:.2rem 0 0;font-size:14.5px;color:#8e8e89}.bad{color:#ff8a80}
-.alt{display:block;margin-top:1rem;text-align:center;font-size:14px;color:#8e8e89}
-</style><body><div class="box"><img src="${MARK}" alt=""><h1>{{site}}</h1>{{body}}</div></body></html>`;
-var SESSION_JS = `
-// --- cloudfact's own sign-in: its pages in front, Access's one-time PIN behind, then its own cookie ---
+button{font:inherit;cursor:pointer;border:0;border-radius:10px}
+form button{margin-top:1rem;width:100%;padding:.75rem 1rem;background:#f4f4f1;color:#0d0d0d;font-weight:500}
+button:disabled{opacity:.45;cursor:default}button:focus-visible{outline:2px solid #f4f4f1;outline-offset:3px}
+#hint{margin:.1rem 0 0;font-size:14.5px;color:#8e8e89;overflow-wrap:anywhere}
+#msg,#err{margin:.9rem 0 0;font-size:13.5px;line-height:1.5;overflow-wrap:anywhere}#msg{color:#b9b9b4}#err{color:#ff8a80}
+#msg:empty,#err:empty{display:none}
+.alt{display:block;margin:1rem auto 0;background:none;padding:.3rem;text-align:center;font-size:14px;color:#8e8e89}
+[hidden]{display:none!important}
+</style><body><div class="box" id="lock" data-site="{{site}}" data-check="{{check}}" data-offline="{{offline}}" data-failed="{{failed}}">
+<img src="${MARK}" alt=""><h1 id="title">{{site}}</h1><p id="hint" hidden></p>
+<form id="emailForm" hidden><label class="field" for="email">{{yourEmail}}</label>
+<input id="email" type="email" autocomplete="email" required maxlength="254" spellcheck="false" autocapitalize="none" placeholder="{{placeholder}}">
+<label class="check"><input id="remember" type="checkbox" checked>{{remember}}</label>
+<button type="submit">{{getCode}}</button></form>
+<form id="codeForm" hidden><label class="field" for="code">{{emailCode}}</label>
+<input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*" maxlength="7" required placeholder="000 000">
+<button type="submit">{{signin}}</button></form>
+<p id="msg" role="status" aria-live="polite"></p><p id="err" role="alert"></p>
+<button type="button" class="alt" id="back" hidden>{{other}}</button><a class="alt" id="official" href="/" hidden>{{official}}</a>
+<noscript><p id="err" style="display:block">{{noscript}}</p></noscript>
+</div><script>${PAGE_JS}</script></body></html>`;
+var MAIL_HTML = `<div style="font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;max-width:420px;margin:0 auto;padding:28px 24px;background:#0d0d0d;color:#f4f4f1;border-radius:14px;text-align:center"><div style="font-size:18px;font-weight:600;margin:0 0 4px">CloudFact</div><div style="font-size:14px;color:#8e8e89;margin:0 0 18px">{{intro}}</div><div style="font-size:34px;font-weight:700;letter-spacing:6px;-webkit-user-select:all;user-select:all;margin:0 0 18px">{{code}}</div><div style="font-size:13px;color:#8e8e89">{{valid}}</div></div>`;
+var SESSION_JS = String.raw`
+// --- cloudfact's own sign-in: its page in front; the code by its own email, or by Access's behind it ---
 const SESSION_COOKIE = 'cloudfact_session';
-const LOGIN_PATH = '/.cloudfact/login'; // the one path Access guards: the official way in, and the fallback
-const EMAIL_PATH = '/.cloudfact/email';
-const CODE_PATH = '/.cloudfact/code';
+const LOGIN_PATH = '/.cloudfact/login'; // the one path Access guards: the official way in
+const ASK_PATH = '/.cloudfact/code';
+const ENTER_PATH = '/.cloudfact/enter';
 const LOGOUT_PATH = '/.cloudfact/logout';
 const REMEMBER_FOR = 400 * 86400; // the longest a browser keeps a cookie
 const SESSION_FOR = 86400; // not remembered: until the browser closes, and a day at most
 const RENEW_AFTER = 86400; // a remembered sign-in is pushed forward at most once a day
 const REQUEST_RETRY_MS = 1500;
+const MAIL_RETRY_MS = 3000;
+const RESEND = 'https://api.resend.com/emails';
+const MAIL_FROM = 'CloudFact <onboarding@resend.dev>'; // Resend's own domain: delivers to the account owner only
 const PAGE_HTML = ${JSON.stringify(PAGE_HTML)};
+const MAIL_HTML = ${JSON.stringify(MAIL_HTML)};
 const TEXT = {
-  en: { email: 'Email', remember: 'Remember me', send: 'Send code', code: 'Code', signin: 'Sign in', wrong: 'Wrong code',
-    other: 'Use another email', failed: 'Could not ask Cloudflare for a code', official: 'Sign in through Cloudflare', busy: 'Too many attempts. Wait a minute.' },
-  pt: { email: 'E-mail', remember: 'Lembrar meu login', send: 'Enviar c\xF3digo', code: 'C\xF3digo', signin: 'Entrar', wrong: 'C\xF3digo incorreto',
-    other: 'Trocar e-mail', failed: 'N\xE3o deu para pedir o c\xF3digo ao Cloudflare', official: 'Entrar pelo Cloudflare', busy: 'Muitas tentativas. Espere um minuto.' },
+  en: { yourEmail: 'Your email', placeholder: 'you@example.com', remember: 'Remember me', getCode: 'Get a code', check: 'Check your email',
+    emailCode: 'Code from the email', signin: 'Sign in', other: 'Use another email', official: 'Sign in through Cloudflare',
+    noscript: 'This page needs JavaScript to sign you in.', offline: 'Could not connect. Check the connection and try again.',
+    failed: 'Could not finish. Try again.', generic: 'If this email has access, the code arrives in a moment. Check the spam folder too.',
+    badEmail: 'Enter a valid email.', busy: 'Too many requests. Try again in a few minutes.', newCode: 'Ask for a new code.',
+    sixDigits: 'Type the 6 digits of the code.', expired: 'Code expired. Ask for a new one.', wrong: 'Wrong code.',
+    wrongLast: 'Wrong code. Ask for a new one.', refused: 'Request refused.', invalid: 'Invalid request.',
+    accessDown: 'Could not ask Cloudflare for a code', notReady: 'Sign-in is not set up for this site yet.',
+    subject: 'Your CloudFact code: ', intro: 'Your sign-in code for ', valid: 'Valid for 1 hour.' },
+  pt: { yourEmail: 'Seu e-mail', placeholder: 'voce@exemplo.com', remember: 'Lembrar meu login', getCode: 'Receber um código', check: 'Confira seu e-mail',
+    emailCode: 'Código do e-mail', signin: 'Entrar', other: 'Usar outro e-mail', official: 'Entrar pelo Cloudflare',
+    noscript: 'Esta página precisa de JavaScript para entrar.', offline: 'Não foi possível conectar. Confira a conexão e tente de novo.',
+    failed: 'Não foi possível concluir. Tente de novo.', generic: 'Se este e-mail tiver acesso, o código chega em instantes. Confira também o spam.',
+    badEmail: 'Informe um e-mail válido.', busy: 'Muitos pedidos. Tente de novo em alguns minutos.', newCode: 'Peça um novo código.',
+    sixDigits: 'Digite os 6 números do código.', expired: 'Código vencido. Peça um novo.', wrong: 'Código incorreto.',
+    wrongLast: 'Código incorreto. Peça um novo.', refused: 'Pedido recusado.', invalid: 'Pedido inválido.',
+    accessDown: 'Não deu para pedir o código ao Cloudflare', notReady: 'A entrada deste site ainda não foi configurada.',
+    subject: 'Seu código do CloudFact: ', intro: 'Seu código para entrar em ', valid: 'Vale por 1 hora.' },
 };
 function cookieNamed(request, name) {
   for (const part of (request.headers.get('cookie') || '').split(';')) {
@@ -487,7 +585,11 @@ function cookieNamed(request, name) {
 function toB64url(bytes) {
   let s = '';
   for (const b of bytes) s += String.fromCharCode(b);
-  return btoa(s).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+const hex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+async function sha256(text) {
+  return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(text))));
 }
 let sessionKeyCache = { secret: null, key: null };
 async function sessionKey(secret) {
@@ -524,65 +626,77 @@ async function readSession(request, env) {
 }
 /** Where to go after signing in: a path on this site, never another host and never back into sign-in. */
 function safeNext(value) {
-  if (!value || value[0] !== '/' || value[1] === '/' || /[\\\\\\u0000-\\u001f]/.test(value) || value.startsWith('/.cloudfact/')) return '/';
+  if (typeof value !== 'string' || value.length > 2048 || value[0] !== '/' || value[1] === '/' || /[\\\u0000-\u001f]/.test(value) || value.startsWith('/.cloudfact/')) return '/';
   return value;
 }
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 function langOf(request) {
-  return /^pt\\b/i.test(request.headers.get('accept-language') || '') ? 'pt' : 'en';
+  return /^pt\b/i.test(request.headers.get('accept-language') || '') ? 'pt' : 'en';
 }
-/** The official way in, through Access's own page: the fallback whenever its forms answer the unexpected. */
+const siteOf = (url) => url.host.split('.')[0];
+/** The official way in, through Access's own page. */
 function officialUrl(next, remember) {
   return LOGIN_PATH + '?' + new URLSearchParams({ remember: remember ? '1' : '', next }).toString();
 }
-function page(request, url, status, body) {
-  // functions, not strings, as replacements: a "$&" in an email must stay text
-  const html = PAGE_HTML.replace('{{lang}}', () => langOf(request))
-    .replace('{{site}}', () => escapeHtml(url.host.split('.')[0]))
-    .replace('{{body}}', () => body);
-  return reply(status, html, { 'content-type': 'text/html; charset=utf-8' });
+function loginPage(request, url) {
+  const lang = langOf(request);
+  const slots = Object.assign({}, TEXT[lang], { lang, site: siteOf(url) });
+  const html = PAGE_HTML.replace(/\{\{(\w+)\}\}/g, (_, k) => escapeHtml(slots[k] === undefined ? '' : slots[k]));
+  return reply(200, html, { 'content-type': 'text/html; charset=utf-8' });
 }
-function emailPage(request, url, opts) {
-  const t = TEXT[langOf(request)];
-  const state = opts.failed
-    ? '<p class="state bad">' + t.failed + '</p><a class="alt" href="' + escapeHtml(officialUrl(opts.next, opts.remember)) + '">' + t.official + '</a>'
-    : opts.busy ? '<p class="state bad">' + t.busy + '</p>' : '';
-  return page(request, url, opts.status || 200,
-    '<form method="post" action="' + EMAIL_PATH + '"><input type="hidden" name="next" value="' + escapeHtml(opts.next) + '">' +
-    '<label class="field" for="email">' + t.email + '</label>' +
-    '<input id="email" type="email" name="email" required autofocus autocomplete="email" spellcheck="false" autocapitalize="none" value="' + escapeHtml(opts.email || '') + '">' +
-    '<label class="check"><input type="checkbox" name="remember" value="1"' + (opts.remember === false ? '' : ' checked') + '>' + t.remember + '</label>' +
-    '<button type="submit">' + t.send + '</button></form>' + state);
+const jsonReply = (status, body, headers) => reply(status, JSON.stringify(body), { 'content-type': 'application/json; charset=utf-8', ...headers });
+/** The address as the Stash takes it: trimmed, case-folded, and shaped like an address; otherwise null. */
+function emailAddress(value) {
+  if (typeof value !== 'string') return null;
+  const address = value.trim().toLowerCase();
+  if (address.length > 254 || !/^[a-z0-9.!#$%&'*+\/=?^_\x60{|}~-]+@[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,63}$/.test(address)) return null;
+  return address;
 }
-function codePage(request, url, opts) {
-  const t = TEXT[langOf(request)];
-  const state = opts.wrong ? '<p class="state bad">' + t.wrong + '</p>' : opts.busy ? '<p class="state bad">' + t.busy + '</p>' : '';
-  return page(request, url, opts.status || 200,
-    '<p class="state">' + escapeHtml(opts.email) + '</p>' +
-    '<form method="post" action="' + CODE_PATH + '">' +
-    '<input type="hidden" name="nonce" value="' + escapeHtml(opts.nonce) + '"><input type="hidden" name="next" value="' + escapeHtml(opts.next) + '">' +
-    '<input type="hidden" name="email" value="' + escapeHtml(opts.email) + '"><input type="hidden" name="remember" value="' + (opts.remember ? '1' : '') + '">' +
-    '<label class="field" for="code">' + t.code + '</label>' +
-    '<input id="code" type="text" name="code" required autofocus inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000">' +
-    '<button type="submit">' + t.signin + '</button></form>' + state +
-    '<a class="alt" href="' + escapeHtml(opts.next) + '">' + t.other + '</a>');
+function newRequest() {
+  return toB64url(crypto.getRandomValues(new Uint8Array(24))); // 32 characters, as secrets.token_urlsafe(24)
 }
-/** Per-IP limit on the sign-in forms, when the Worker has the rate-limit binding. */
-async function limited(env, request, what) {
-  if (!env.SESSION_LIMIT) return false;
-  try {
-    const { success } = await env.SESSION_LIMIT.limit({ key: what + ':' + (request.headers.get('cf-connecting-ip') || 'unknown') });
-    return !success;
-  } catch {
-    return false;
+function newCode() {
+  const buf = new Uint32Array(1);
+  let n;
+  do {
+    crypto.getRandomValues(buf);
+    n = buf[0];
+  } while (n >= 4294000000); // drop the tail so every code is equally likely
+  return String(n % 1000000).padStart(6, '0');
+}
+const codeHash = (request, code) => sha256(request + ':' + code);
+const mailReady = (env) => Boolean(env.RESEND_API_KEY && env.LOGIN);
+async function loginStore(env, body) {
+  const stub = env.LOGIN.get(env.LOGIN.idFromName('login'));
+  const res = await stub.fetch('https://login/', { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } });
+  return res.json();
+}
+/** Mails the code through Resend; one more try on a server error, a 429 or no network. Never logs the key or the code. */
+async function sendCode(env, lang, site, address, code, request) {
+  const t = TEXT[lang];
+  const html = MAIL_HTML.replace('{{intro}}', escapeHtml(t.intro + site)).replace('{{code}}', code).replace('{{valid}}', t.valid);
+  const payload = { from: env.CLOUDFACT_MAIL_FROM || MAIL_FROM, to: [address], subject: t.subject + code, text: t.subject + code + '\n\n' + t.valid + '\n', html };
+  const headers = { authorization: 'Bearer ' + env.RESEND_API_KEY, 'content-type': 'application/json', 'user-agent': 'CloudFact-Login/1.0', 'idempotency-key': 'cloudfact-login-' + request };
+  let status = 'network';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, MAIL_RETRY_MS));
+    try {
+      const res = await fetch(RESEND, { method: 'POST', headers, body: JSON.stringify(payload) });
+      status = res.status;
+      if (res.ok) {
+        console.log(JSON.stringify({ mail: 'sent' }));
+        return;
+      }
+      if (status < 500 && status !== 429) break;
+    } catch {
+      status = 'network';
+    }
   }
+  console.log(JSON.stringify({ mail: 'failed', status }));
 }
 const form = (fields) => ({ method: 'POST', body: new URLSearchParams(fields).toString(), headers: { 'content-type': 'application/x-www-form-urlencoded' }, redirect: 'manual' });
-/**
- * Asks Access to mail a code to \`email\`. Returns the nonce that goes with it, or null. Access turns away
- * bursts of requests from Workers for about a minute, so a refusal gets one more try a moment later.
- */
-async function requestCode(env, url, email, next, remember) {
+/** Access way: asks Access to mail a code. The nonce that goes with it, or null; one retry, as Access turns away bursts from Workers. */
+async function accessAsk(env, url, email, next, remember) {
   const team = 'https://' + env.CLOUDFACT_ACCESS_TEAM;
   const target = team + '/cdn-cgi/access/verify-code/' + url.host + '?' + new URLSearchParams({ kid: env.CLOUDFACT_ACCESS_AUD, redirect_url: officialUrl(next, remember) });
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -595,8 +709,8 @@ async function requestCode(env, url, email, next, remember) {
   }
   return null;
 }
-/** Hands the code to Access. { wrong } for a code it refused; { to } where it sends a code it took; null otherwise. */
-async function checkCode(env, code, nonce) {
+/** Access way: { wrong } for a code it refused; { to } where it sends a code it took; null otherwise. */
+async function accessCheck(env, code, nonce) {
   const team = 'https://' + env.CLOUDFACT_ACCESS_TEAM;
   const res = await fetch(team + '/cdn-cgi/access/callback', form({ code, nonce }));
   const location = res.headers.get('location');
@@ -605,11 +719,96 @@ async function checkCode(env, code, nonce) {
   if (to.host === env.CLOUDFACT_ACCESS_TEAM && to.pathname.startsWith('/cdn-cgi/access/login/')) return { wrong: true };
   return { to };
 }
+/** Per-IP limit on the Access way's routes, when the Worker has the rate-limit binding. */
+async function limited(env, request, what) {
+  if (!env.SESSION_LIMIT) return false;
+  try {
+    const { success } = await env.SESSION_LIMIT.limit({ key: what + ':' + (request.headers.get('cf-connecting-ip') || 'unknown') });
+    return !success;
+  } catch {
+    return false;
+  }
+}
+/** POST /.cloudfact/code {email, remember, next} → { ok, request, message } — the same answer for any address. */
+async function askCode(request, env, ctx, url, t, lang, payload) {
+  const address = emailAddress(payload.email);
+  if (!address) return jsonReply(400, { error: t.badEmail });
+  const next = safeNext(payload.next);
+  const remember = payload.remember !== false;
+  if (!mailReady(env)) {
+    if (await limited(env, request, 'email')) return jsonReply(429, { error: t.busy });
+    let nonce = null;
+    try {
+      nonce = await accessAsk(env, url, address, next, remember);
+    } catch {
+      nonce = null;
+    }
+    if (!nonce) return jsonReply(502, { error: t.accessDown, official: officialUrl(next, remember) });
+    return jsonReply(200, { ok: true, request: nonce, message: t.generic });
+  }
+  const id = newRequest();
+  const code = newCode();
+  const allowed = allowedEmails(env).includes(address);
+  // another address gets an unguessable code, so a wrong guess reads the same for both
+  const hash = allowed ? await codeHash(id, code) : hex(crypto.getRandomValues(new Uint8Array(32)));
+  const stored = await loginStore(env, { op: 'ask', request: id, hash, addressKey: await sha256(address), address: allowed ? address : null });
+  if (stored.error === 'busy') return jsonReply(429, { error: t.busy });
+  if (!stored.ok) return jsonReply(500, { error: t.failed });
+  if (allowed) {
+    const sending = sendCode(env, lang, siteOf(url), address, code, id);
+    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(sending);
+    else await sending;
+  }
+  return jsonReply(200, { ok: true, request: id, message: t.generic });
+}
+/** POST /.cloudfact/enter {request, code, remember, next} → { ok, next } plus the session cookie. */
+async function enterCode(request, env, url, t, payload) {
+  const code = typeof payload.code === 'string' ? payload.code.replace(/\s/g, '') : '';
+  const id = typeof payload.request === 'string' ? payload.request : '';
+  const next = safeNext(payload.next);
+  const remember = payload.remember !== false;
+  if (!mailReady(env)) {
+    if (!/^[A-Za-z0-9_-]{8,256}$/.test(id)) return jsonReply(400, { error: t.newCode });
+    if (!/^\d{6}$/.test(code)) return jsonReply(400, { error: t.sixDigits });
+    if (await limited(env, request, 'code')) return jsonReply(429, { error: t.busy });
+    let result = null;
+    try {
+      result = await accessCheck(env, code, id);
+    } catch {
+      result = null;
+    }
+    if (!result) return jsonReply(502, { error: t.accessDown, official: officialUrl(next, remember) });
+    if (result.wrong) return jsonReply(400, { error: t.wrong });
+    // Access took the code: its token for this app rides in the redirect to /cdn-cgi/access/authorized
+    const token = result.to.host === url.host && result.to.pathname === '/cdn-cgi/access/authorized' ? result.to.searchParams.get('token') : null;
+    let claims = false;
+    try {
+      claims = token ? await verifyToken(token, env.CLOUDFACT_ACCESS_TEAM, env.CLOUDFACT_ACCESS_AUD) : false;
+    } catch {
+      claims = false;
+    }
+    const who = claims && typeof claims.email === 'string' ? claims.email.toLowerCase() : '';
+    if (who && allowedEmails(env).includes(who)) return jsonReply(200, { ok: true, next }, { 'set-cookie': await sessionCookie(env, who, remember) });
+    return jsonReply(200, { ok: true, next: result.to.toString() }); // not the shape expected: the browser finishes the official way
+  }
+  if (!/^[A-Za-z0-9_-]{32}$/.test(id)) return jsonReply(400, { error: t.newCode });
+  if (!/^\d{6}$/.test(code)) return jsonReply(400, { error: t.sixDigits });
+  const result = await loginStore(env, { op: 'enter', request: id, hash: await codeHash(id, code) });
+  if (result.error === 'expired') return jsonReply(400, { error: t.expired });
+  if (result.error === 'wrong') return jsonReply(400, { error: t.wrong });
+  if (result.error === 'wrong-last') return jsonReply(400, { error: t.wrongLast });
+  if (!result.ok) return jsonReply(500, { error: t.failed });
+  // only an allowed address ever had a code that can be right: the one it was mailed to names the session
+  const who = typeof result.address === 'string' ? result.address : '';
+  if (!allowedEmails(env).includes(who)) return jsonReply(400, { error: t.expired });
+  console.log(JSON.stringify({ login: 'ok' }));
+  return jsonReply(200, { ok: true, next }, { 'set-cookie': await sessionCookie(env, who, remember) });
+}
 /**
  * Access mode, before anything else: { response } answers instead of the site; { renew } lets the request
  * through, with a fresh cookie to send back (or null).
  */
-async function signIn(request, env, url) {
+async function signIn(request, env, url, ctx) {
   if (url.pathname === LOGIN_PATH) {
     // Cloudflare Access guards this one path: a request only gets here signed in, with its token
     let claims = false;
@@ -626,68 +825,104 @@ async function signIn(request, env, url) {
     return { response: reply(303, null, { location: safeNext(url.searchParams.get('next')), 'set-cookie': await sessionCookie(env, email, remember) }) };
   }
   if (url.pathname === LOGOUT_PATH)
-    return { response: reply(303, null, { location: '/cdn-cgi/access/logout', 'set-cookie': SESSION_COOKIE + '=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0' }) };
-  if (url.pathname === EMAIL_PATH || url.pathname === CODE_PATH) {
-    if (request.method !== 'POST') return { response: reply(303, null, { location: '/' }) };
+    return { response: reply(303, null, { location: '/', 'set-cookie': SESSION_COOKIE + '=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0' }) };
+  if (url.pathname === ASK_PATH || url.pathname === ENTER_PATH) {
+    const lang = langOf(request);
+    const t = TEXT[lang];
+    if (request.method !== 'POST') return { response: jsonReply(405, { error: t.invalid }, { allow: 'POST' }) };
     const origin = request.headers.get('origin');
-    if (origin && origin !== 'https://' + url.host) return { response: reply(403, 'cloudfact: sign-in forms only take posts from this site', { 'content-type': 'text/plain' }) };
-    if (!env.CLOUDFACT_SESSION_SECRET) return { response: reply(503, 'cloudfact: sign-in is not configured for this site yet', { 'content-type': 'text/plain' }) };
-    let fields;
+    if ((origin && origin !== 'https://' + url.host) || !(request.headers.get('content-type') || '').startsWith('application/json'))
+      return { response: jsonReply(403, { error: t.refused }) };
+    if (!env.CLOUDFACT_SESSION_SECRET) return { response: jsonReply(503, { error: t.notReady }) };
+    let payload;
     try {
-      fields = new URLSearchParams(await request.text());
+      const text = await request.text();
+      if (!text || text.length > 4096) throw new Error('size');
+      payload = JSON.parse(text);
     } catch {
-      fields = new URLSearchParams();
+      return { response: jsonReply(400, { error: t.invalid }) };
     }
-    const next = safeNext(fields.get('next'));
-    const remember = fields.get('remember') === '1';
-    const email = (fields.get('email') || '').trim().toLowerCase().slice(0, 254);
-    if (url.pathname === EMAIL_PATH) {
-      if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) return { response: emailPage(request, url, { next, remember, email, status: 400 }) };
-      if (await limited(env, request, 'email')) return { response: emailPage(request, url, { next, remember, email, busy: true, status: 429 }) };
-      let nonce = null;
-      try {
-        nonce = await requestCode(env, url, email, next, remember);
-      } catch {
-        nonce = null;
-      }
-      if (!nonce) return { response: emailPage(request, url, { next, remember, email, failed: true, status: 502 }) };
-      return { response: codePage(request, url, { next, remember, email, nonce }) };
-    }
-    const nonce = fields.get('nonce') || '';
-    const code = (fields.get('code') || '').replace(/\\s+/g, '');
-    if (!/^[A-Za-z0-9_-]{8,256}$/.test(nonce)) return { response: emailPage(request, url, { next, remember, email, status: 400 }) };
-    if (await limited(env, request, 'code')) return { response: codePage(request, url, { next, remember, email, nonce, busy: true, status: 429 }) };
-    if (!/^[0-9]{6}$/.test(code)) return { response: codePage(request, url, { next, remember, email, nonce, wrong: true, status: 401 }) };
-    let answer = null;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { response: jsonReply(400, { error: t.invalid }) };
     try {
-      answer = await checkCode(env, code, nonce);
+      if (url.pathname === ASK_PATH) return { response: await askCode(request, env, ctx, url, t, lang, payload) };
+      return { response: await enterCode(request, env, url, t, payload) };
     } catch {
-      answer = null;
+      console.log(JSON.stringify({ error: 'unexpected' })); // never the exception: it may carry the Resend key
+      return { response: jsonReply(500, { error: t.failed }) };
     }
-    if (!answer) return { response: emailPage(request, url, { next, remember, email, failed: true, status: 502 }) };
-    if (answer.wrong) return { response: codePage(request, url, { next, remember, email, nonce, wrong: true, status: 401 }) };
-    // Access took the code: its token for this app rides in the redirect to /cdn-cgi/access/authorized
-    const token = answer.to.host === url.host && answer.to.pathname === '/cdn-cgi/access/authorized' ? answer.to.searchParams.get('token') : null;
-    let claims = false;
-    try {
-      claims = token ? await verifyToken(token, env.CLOUDFACT_ACCESS_TEAM, env.CLOUDFACT_ACCESS_AUD) : false;
-    } catch {
-      claims = false;
-    }
-    const who = claims && typeof claims.email === 'string' ? claims.email.toLowerCase() : '';
-    if (who && allowedEmails(env).includes(who))
-      return { response: reply(303, null, { location: next, 'set-cookie': await sessionCookie(env, who, remember) }) };
-    // not the shape expected: let the browser finish the official way (it ends at LOGIN_PATH, which signs in)
-    return { response: reply(303, null, { location: answer.to.toString() }) };
   }
   const session = await readSession(request, env);
   if (session) {
     const stale = session.r === 1 && Math.floor(Date.now() / 1000) - session.iat > RENEW_AFTER;
     return { renew: stale ? await sessionCookie(env, session.e, true) : null };
   }
-  if (request.method === 'GET' && (request.headers.get('accept') || '').includes('text/html'))
-    return { response: emailPage(request, url, { next: safeNext(url.pathname + url.search) }) };
+  if (request.method === 'GET' && (request.headers.get('accept') || '').includes('text/html')) return { response: loginPage(request, url) };
   return { response: reply(401, 'cloudfact: not signed in. Open https://' + url.host + '/ to sign in.', { 'content-type': 'text/plain' }) };
+}
+`;
+
+// src/backends/workers/login-store-js.ts
+var LOGIN_STORE_JS = String.raw`
+// --- email-code sign-in state: one Durable Object per site ---
+const CODE_TTL = 3600; // seconds
+const CODE_TRIES = 5;
+const ADDRESS_LIMITS = [[900, 5], [86400, 30]]; // codes asked for one address: 5 per 15 min, 30 per day
+const ANYONE_LIMIT = [900, 60];
+function sameHex(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+export class CloudfactLogin {
+  constructor(state) {
+    this.storage = state.storage;
+  }
+  async fetch(request) {
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return Response.json({ error: 'invalid' }, { status: 400 });
+    }
+    const now = Date.now() / 1000;
+    if (body.op === 'ask') return Response.json(await this.ask(body, now));
+    if (body.op === 'enter') return Response.json(await this.enter(body, now));
+    return Response.json({ error: 'invalid' }, { status: 400 });
+  }
+  /** { ok } after storing the code's hash, or { error: 'busy' } past a limit (nothing stored then). */
+  async ask({ request, hash, addressKey, address }, now) {
+    for (const [key, row] of await this.storage.list({ prefix: 'code:' })) if (row.expires < now) await this.storage.delete(key);
+    for (const [key, times] of await this.storage.list({ prefix: 'asks:' }))
+      if (!times.some((at) => at >= now - 86400)) await this.storage.delete(key);
+    const anyone = ((await this.storage.get('asks:anyone')) || []).filter((at) => at > now - ANYONE_LIMIT[0]);
+    const mine = ((await this.storage.get('asks:' + addressKey)) || []).filter((at) => at > now - 86400);
+    const seen = (list, window) => list.filter((at) => at > now - window).length;
+    if (anyone.length >= ANYONE_LIMIT[1] || ADDRESS_LIMITS.some(([w, n]) => seen(mine, w) >= n)) {
+      await this.storage.put('asks:anyone', anyone);
+      await this.storage.put('asks:' + addressKey, mine);
+      return { error: 'busy' };
+    }
+    anyone.push(now);
+    mine.push(now);
+    await this.storage.put('asks:anyone', anyone);
+    await this.storage.put('asks:' + addressKey, mine);
+    await this.storage.put('code:' + request, { hash, address: address || null, attempts: 0, expires: now + CODE_TTL });
+    return { ok: true };
+  }
+  /** { ok, address } for the right code (then gone), { error: 'expired' | 'wrong' | 'wrong-last' } otherwise. */
+  async enter({ request, hash }, now) {
+    const key = 'code:' + request;
+    const row = await this.storage.get(key);
+    if (!row || row.expires <= now || row.attempts >= CODE_TRIES) return { error: 'expired' };
+    if (!sameHex(hash, row.hash)) {
+      row.attempts += 1;
+      await this.storage.put(key, row);
+      return { error: row.attempts >= CODE_TRIES ? 'wrong-last' : 'wrong' };
+    }
+    await this.storage.delete(key);
+    return { ok: true, address: row.address };
+  }
 }
 `;
 
@@ -697,6 +932,7 @@ const COOKIE = 'cloudfact_access';
 const GATE_HTML = ${JSON.stringify(GATE_HTML)};
 ${ACCESS_JS}
 ${SESSION_JS}
+${LOGIN_STORE_JS}
 ${CONTROL_JS}
 function timingEqual(a, b) {
   const x = enc.encode(a), y = enc.encode(b);
@@ -716,7 +952,7 @@ export default {
     if (env.CLOUDFACT_ACCESS === '1') {
       if (!env.CLOUDFACT_ACCESS_AUD || !env.CLOUDFACT_ACCESS_TEAM) return reply(503, 'cloudfact: Cloudflare Access not configured for this site yet', { 'content-type': 'text/plain' });
       const url = new URL(request.url);
-      const gate = await signIn(request, env, url);
+      const gate = await signIn(request, env, url, ctx);
       if (gate.response) return gate.response;
       if (url.pathname.startsWith('/.cloudfact/')) return control(request, env, url);
       const res = await env.ASSETS.fetch(request);
@@ -760,16 +996,17 @@ export default {
 var PROXY_WORKER_SOURCE = `// generated by cloudfact \u2014 access proxy worker
 ${ACCESS_JS}
 ${SESSION_JS}
+${LOGIN_STORE_JS}
 const ORIGIN_COOKIE = 'cloudfact_access';
 const HOP_BY_HOP = ['connection', 'keep-alive', 'transfer-encoding', 'te', 'trailer', 'proxy-authorization', 'proxy-authenticate'];
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (env.CLOUDFACT_ACCESS !== '1' || !env.CLOUDFACT_ACCESS_AUD || !env.CLOUDFACT_ACCESS_TEAM) {
       return reply(503, 'cloudfact: Cloudflare Access is not configured for this app yet', { 'content-type': 'text/plain' });
     }
     const url = new URL(request.url);
-    const gate = await signIn(request, env, url);
+    const gate = await signIn(request, env, url, ctx);
     if (gate.response) return gate.response;
     if (!env.CLOUDFACT_ORIGIN) {
       return reply(503, 'cloudfact: the machine serving this app has no tunnel right now; it should reconnect on its own', {

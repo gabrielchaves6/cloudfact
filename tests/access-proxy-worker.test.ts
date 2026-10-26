@@ -61,7 +61,7 @@ describe('access proxy worker', () => {
     origins = [];
     const res = await call({ accept: 'text/html' });
     expect(res.status).toBe(200);
-    expect(await res.text()).toContain('<input type="hidden" name="next" value="/painel?a=1">');
+    expect(await res.text()).toContain('<form id="emailForm" hidden>');
     expect((await call()).status).toBe(401);
     expect((await call({ 'cf-access-jwt-assertion': await jwt(keys.privateKey, 'k1', claims()) })).status).toBe(401);
     expect(origins).toHaveLength(0);

@@ -27,6 +27,8 @@ usage:
   cloudfact login --device                       (approve in a browser on any device; no token pasting)
   cloudfact login [--token T] [--account-id ID]  (Cloudflare API token)
   cloudfact logout
+  <resend key> | cloudfact mail-key [name ...]   (sign-in by email: the deploys behind Access mail their own codes
+                                                  through Resend; the key comes on stdin and is not stored here)
   cloudfact mcp                                  (MCP server over stdio)
 
 path = a folder (served whole, index.html at the root) or a single .html file. Private (key-gated link) by default; --public to open.
@@ -258,6 +260,18 @@ export async function main(argv: string[]): Promise<number> {
     case 'logout':
       print(cf.logout());
       return 0;
+    case 'mail-key': {
+      if (process.stdin.isTTY) throw new Error('pipe the Resend API key in: <command that prints it> | cloudfact mail-key [name ...]');
+      let key = '';
+      for await (const chunk of process.stdin) key += String(chunk);
+      const r = cf.setMailKey(key.trim(), rest);
+      if (values.json) print(r);
+      else {
+        if (r.set.length) console.log(`email sign-in on: ${r.set.join(', ')}`);
+        for (const f of r.failed) console.log(`not set: ${f.name}: ${f.error}`);
+      }
+      return r.failed.length ? 1 : 0;
+    }
     case 'mcp':
       await import('../server.js');
       return 0;

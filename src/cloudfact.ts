@@ -4,7 +4,7 @@ import path from 'node:path';
 import { BIN_SCRIPT, BRAND_DIR, HOME, VERSION, readConfig, writeConfig } from './config.js';
 import { deployTunnel, newKey, stopTunnel } from './backends/tunnel/index.js';
 import { POWER_PATH } from './backends/tunnel/power.js';
-import { deployAccessProxy, rotateWorkersKey } from './backends/workers/index.js';
+import { deployAccessProxy, putSecret, rotateWorkersKey } from './backends/workers/index.js';
 import { expiryFrom } from './services/duration.js';
 import { accountEmail, bearer, catalog as readCatalog, publishedCatalogName, switchWorker, tagWorker } from './services/catalog.js';
 import { galleryHtml } from './services/gallery.js';
@@ -12,6 +12,7 @@ import { snapshots } from './services/snapshot.js';
 import { deleteWorker, deployWorkers } from './backends/workers/index.js';
 import { cloudflaredVersion, findCloudflared } from './services/cloudflared.js';
 import {
+  deployDir,
   effectiveState,
   isLive,
   listDeploys,
@@ -304,6 +305,39 @@ export async function rotate(name: string, opts: { expires?: string } = {}): Pro
   const next = { ...s, key, keyExpiresAt, privateUrl: `${s.url}/#key=${key}` };
   writeState(name, next);
   return { ...summarize(next), reused: false };
+}
+
+/**
+ * Gives the sign-in pages of the deploys behind Access their own email: the Resend API key becomes each
+ * Worker's RESEND_API_KEY secret, and the page then mails the code itself (from CloudFact
+ * <onboarding@resend.dev>) and checks it in its own Durable Object, instead of going through Access. The
+ * key comes from the caller (stdin, in the CLI) and is not stored on this machine; the secret outlives
+ * redeploys. Without names, every deploy behind Access.
+ */
+export function setMailKey(key: string, names: string[] = []): { set: string[]; failed: { name: string; error: string }[] } {
+  if (!/^re_\S{10,}$/.test(key)) throw new Error('that does not look like a Resend API key (re_…)');
+  const targets = names.length
+    ? names
+    : listDeploys()
+        .filter((s) => s.access)
+        .map((s) => s.name);
+  if (!targets.length) throw new Error('no deploy behind Access here (deploy or expose with --access first)');
+  const out = { set: [] as string[], failed: [] as { name: string; error: string }[] };
+  for (const name of targets) {
+    if (!readState(name)?.access) {
+      out.failed.push({ name, error: 'not behind Access' });
+      continue;
+    }
+    const dir = deployDir(name);
+    const workerDir = path.join(dir, 'worker');
+    const r = putSecret(name, 'RESEND_API_KEY', key, {
+      cwd: fs.existsSync(workerDir) ? workerDir : dir,
+      logFile: path.join(dir, 'wrangler.log'),
+    });
+    if (r.status === 0) out.set.push(name);
+    else out.failed.push({ name, error: `wrangler secret put failed: ${r.text.slice(-300)}` });
+  }
+  return out;
 }
 
 export async function stop(name: string): Promise<{ name: string; stopped: boolean; note?: string }> {

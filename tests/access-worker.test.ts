@@ -60,12 +60,14 @@ describe('gate worker in Access mode: its own sign-in pages and "Remember me" co
     const res = await page({}, env, '/painel?a=1');
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('<form method="post" action="/.cloudfact/email">');
-    expect(html).toContain('type="email" name="email" required');
-    expect(html).toContain('name="remember" value="1" checked>Remember me');
-    expect(html).toContain('<input type="hidden" name="next" value="/painel?a=1">');
-    expect(html).toContain('<h1>site</h1>');
-    expect(html).not.toMatch(/<script/);
+    expect(html).toContain('<form id="emailForm" hidden>');
+    expect(html).toContain('<input id="email" type="email" autocomplete="email" required');
+    expect(html).toContain('<input id="remember" type="checkbox" checked>Remember me');
+    expect(html).toContain('<button type="submit">Get a code</button>');
+    expect(html).toContain('autocomplete="one-time-code"');
+    expect(html).toContain('<h1 id="title">site</h1>');
+    expect(html).toContain('data-check="Check your email"');
+    expect(html).toContain('localStorage'); // the request survives a reload on the way to the inbox
     expect(assetFetches).toBe(0);
   });
 
@@ -73,7 +75,8 @@ describe('gate worker in Access mode: its own sign-in pages and "Remember me" co
     const html = await (await page({ 'accept-language': 'pt-BR,pt;q=0.9,en;q=0.8' })).text();
     expect(html).toContain('lang="pt"');
     expect(html).toContain('Lembrar meu login');
-    expect(html).toContain('>Enviar código</button>');
+    expect(html).toContain('>Receber um código</button>');
+    expect(html).toContain('data-check="Confira seu e-mail"');
   });
 
   it('answers 401, not a page, to a request that is not a page load', async () => {
@@ -84,7 +87,7 @@ describe('gate worker in Access mode: its own sign-in pages and "Remember me" co
   it('does not take an Access token outside the sign-in path: only the session cookie lets one in', async () => {
     assetFetches = 0;
     const res = await page({ 'cf-access-jwt-assertion': await token() });
-    expect(await res.text()).toContain('action="/.cloudfact/email"');
+    expect(await res.text()).toContain('id="emailForm"');
     expect(assetFetches).toBe(0);
   });
 
@@ -109,7 +112,7 @@ describe('gate worker in Access mode: its own sign-in pages and "Remember me" co
     expect((await page({ cookie: cookieOf(res) })).status).toBe(200);
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(Date.now() + 25 * 3600 * 1000);
-    expect(await (await page({ cookie: cookieOf(res) })).text()).toContain('action="/.cloudfact/email"');
+    expect(await (await page({ cookie: cookieOf(res) })).text()).toContain('id="emailForm"');
   });
 
   it('a remembered browser stays signed in: after a day its cookie is pushed forward', async () => {
@@ -173,14 +176,14 @@ describe('gate worker in Access mode: its own sign-in pages and "Remember me" co
       `${name}=${body}.${sig.slice(0, -2)}AA`, // signature tampered
       `${name}=${body}`, // no signature
     ];
-    for (const cookie of cases) expect(await (await page({ cookie })).text()).toContain('action="/.cloudfact/email"');
+    for (const cookie of cases) expect(await (await page({ cookie })).text()).toContain('id="emailForm"');
     // another key (a site that rotated it, or another site), another app, or the email taken off the list
     for (const e of [
       { ...env, CLOUDFACT_SESSION_SECRET: 'another-secret' },
       { ...env, CLOUDFACT_ACCESS_AUD: 'another-app' },
       { ...env, CLOUDFACT_ACCESS_EMAILS: 'bob@example.com' },
     ])
-      expect(await (await page({ cookie: good }, e)).text()).toContain('action="/.cloudfact/email"');
+      expect(await (await page({ cookie: good }, e)).text()).toContain('id="emailForm"');
   });
 
   it('only sends the visitor back to a path on this site', async () => {
@@ -198,10 +201,10 @@ describe('gate worker in Access mode: its own sign-in pages and "Remember me" co
       expect(await where(next)).toBe('/');
   });
 
-  it('signs out: drops the cookie and ends the Access session', async () => {
+  it('signs out: drops the cookie and goes back to the sign-in page', async () => {
     const res = await page({}, env, '/.cloudfact/logout');
     expect(res.status).toBe(303);
-    expect(res.headers.get('location')).toBe('/cdn-cgi/access/logout');
+    expect(res.headers.get('location')).toBe('/');
     expect(res.headers.get('set-cookie')).toBe('cloudfact_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0');
   });
 
