@@ -78,6 +78,26 @@ describe('Cloudflare Access', () => {
     expect(after.CLOUDFACT_SESSION_SECRET).toBe(before.CLOUDFACT_SESSION_SECRET);
   });
 
+  it('updates the sign-in path app when a legacy whole-host app also exists', async () => {
+    const { deploy } = await import('../src/cloudfact.js');
+    const current = api.state.apps[0];
+    const legacy = { ...current, id: 'legacy-root', aud: 'legacy-aud', domain: 'team-site.example-sub.workers.dev' };
+    const stateFile = path.join(home, 'deploys', 'team-site', 'state.json');
+    const before = fs.readFileSync(stateFile);
+    api.state.apps.unshift(legacy); // Cloudflare may list the whole-host app first after an older client redeploys it.
+    try {
+      const r = await deploy({ path: site, name: 'team-site', backend: 'workers', access: ['carol@example.com'] });
+      expect(r.access?.appId).toBe(current.id);
+      expect(api.calls.filter((c) => c.method === 'PUT' && c.path.includes('/access/apps/')).at(-1)?.path).toBe(
+        `/accounts/acc123/access/apps/${current.id}`,
+      );
+      expect(api.state.apps).toHaveLength(2); // neither application is deleted or moved onto the other's destination
+    } finally {
+      api.state.apps.splice(api.state.apps.indexOf(legacy), 1);
+      fs.writeFileSync(stateFile, before);
+    }
+  });
+
   it('remove deletes the worker and the access app', async () => {
     const { remove } = await import('../src/cloudfact.js');
     const r = await remove('team-site');
