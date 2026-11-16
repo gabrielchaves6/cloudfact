@@ -24,7 +24,10 @@ function fakeAccount() {
       return json([...tags].map(([id, t]) => ({ id, tags: t, modified_on: '2026-09-15T10:00:00Z', has_assets: id !== 'api-live' })));
     if (p.endsWith('/workers/subdomain')) return json({ subdomain: 'example-sub' });
     if (p.includes('/access/apps'))
-      return json([{ id: 'app-1', name: 'cloudfact: painel', domain: 'painel.example-sub.workers.dev', aud: 'aud-1' }]);
+      return json([
+        { id: 'app-1', name: 'cloudfact: painel', domain: 'painel.example-sub.workers.dev', aud: 'aud-1' },
+        { id: 'app-login', name: 'cloudfact: painel', domain: 'painel.example-sub.workers.dev/.cloudfact/login', aud: 'aud-login' },
+      ]);
     return new Response('not found', { status: 404 });
   });
   return { fetchImpl, tags };
@@ -86,6 +89,12 @@ describe('account catalog', () => {
     const { catalog } = await import('../src/cloudfact.js');
     const legado = (await catalog()).projects.flatMap((p) => p.deploys).find((d) => d.name === 'legado')!;
     expect(legado).toMatchObject({ project: null, kind: 'static', visibility: 'public' });
+  });
+
+  it('prefers the sign-in path application over a legacy whole-host application', async () => {
+    const { catalog } = await import('../src/cloudfact.js');
+    const painel = (await catalog()).projects.flatMap((p) => p.deploys).find((d) => d.name === 'painel')!;
+    expect(painel.access?.appId).toBe('app-login');
   });
 
   it('shows a local quick tunnel as not living in the account', async () => {

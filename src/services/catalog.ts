@@ -11,6 +11,7 @@ import { readConfig, writeConfig, type Config } from '../config.js';
 import { credentials, oauthToken } from './wrangler.js';
 import { listDeploys } from './state.js';
 import { discoverTunnels, tunnelName } from './local-tunnels.js';
+import { LOGIN_PATH } from './access.js';
 import type { CatalogEntry, CatalogResult, DeployKind, DeployState, Visibility } from '../types.js';
 
 const API = 'https://api.cloudflare.com/client/v4';
@@ -174,7 +175,8 @@ export async function catalog(opts: { project?: string; fetchImpl?: typeof fetch
     const url = subdomain ? `https://${s.id}.${subdomain}.workers.dev` : null;
     const state = local.get(s.id);
     // a cloudfact's Access app guards its sign-in path (host/.cloudfact/login); older ones, the whole host
-    const app = url ? apps.find((a) => a.domain?.split('/')[0] === new URL(url).host) : undefined;
+    const host = url ? new URL(url).host : null;
+    const app = host ? (apps.find((a) => a.domain === host + LOGIN_PATH) ?? apps.find((a) => a.domain === host)) : undefined;
     const visibility = (tagValue(s.tags, VIS_TAG) as Visibility | null) ?? (state ? visibilityOf(state) : app ? 'access' : 'public');
     entries.push({
       name: s.id,

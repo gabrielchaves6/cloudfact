@@ -137,9 +137,10 @@ export async function upsertAccessApp(ctx: AccessContext, opts: UpsertAppOptions
     app_launcher_visible: false,
     policies: [{ name: 'cloudfact allow list', decision: 'allow', include: emails.map((email) => ({ email: { email } })) }],
   };
-  const existing = (await ctx.client.request<{ id: string; domain: string }[]>('GET', `${base}?per_page=100`)).find(
-    (a) => a.domain === opts.domain || a.domain === opts.domain + LOGIN_PATH,
-  );
+  const apps = await ctx.client.request<{ id: string; domain: string }[]>('GET', `${base}?per_page=100`);
+  // Old clients can recreate the whole-host app alongside the sign-in app. Prefer the exact destination:
+  // moving the legacy app onto an existing path fails with Cloudflare error 12132.
+  const existing = apps.find((a) => a.domain === body.domain) ?? apps.find((a) => a.domain === opts.domain);
   const app = existing
     ? await ctx.client.request<{ id: string; aud: string }>('PUT', `${base}/${existing.id}`, body)
     : await ctx.client.request<{ id: string; aud: string }>('POST', base, body);

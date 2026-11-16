@@ -22681,9 +22681,8 @@ async function upsertAccessApp(ctx, opts) {
     app_launcher_visible: false,
     policies: [{ name: "cloudfact allow list", decision: "allow", include: emails.map((email2) => ({ email: { email: email2 } })) }]
   };
-  const existing = (await ctx.client.request("GET", `${base}?per_page=100`)).find(
-    (a) => a.domain === opts.domain || a.domain === opts.domain + LOGIN_PATH
-  );
+  const apps = await ctx.client.request("GET", `${base}?per_page=100`);
+  const existing = apps.find((a) => a.domain === body.domain) ?? apps.find((a) => a.domain === opts.domain);
   const app = existing ? await ctx.client.request("PUT", `${base}/${existing.id}`, body) : await ctx.client.request("POST", base, body);
   return { appId: app.id, aud: app.aud, domain: opts.domain, emails, teamDomain };
 }
@@ -22842,7 +22841,8 @@ async function catalog(opts = {}) {
     if (!(s.tags ?? []).includes(TAG)) continue;
     const url = subdomain ? `https://${s.id}.${subdomain}.workers.dev` : null;
     const state = local.get(s.id);
-    const app = url ? apps.find((a) => a.domain?.split("/")[0] === new URL(url).host) : void 0;
+    const host = url ? new URL(url).host : null;
+    const app = host ? apps.find((a) => a.domain === host + LOGIN_PATH) ?? apps.find((a) => a.domain === host) : void 0;
     const visibility = tagValue(s.tags, VIS_TAG) ?? (state ? visibilityOf(state) : app ? "access" : "public");
     entries.push({
       name: s.id,
