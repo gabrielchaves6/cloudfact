@@ -12,6 +12,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export const newKey = (): string => crypto.randomBytes(32).toString('base64url');
 
 export interface TunnelTarget {
+  internal?: boolean;
   name: string;
   mode: DeployMode;
   root: string | null;
@@ -55,6 +56,7 @@ export async function deployTunnel(t: TunnelTarget): Promise<DeployResult> {
   if (!findCloudflared(readConfig())) await installCloudflared(log.info);
 
   const state: DeployState = {
+    ...(t.internal ? { internal: true } : {}),
     name: t.name,
     backend: 'tunnel',
     mode: t.mode,

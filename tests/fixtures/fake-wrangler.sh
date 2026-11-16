@@ -25,6 +25,8 @@ case "$1" in
     out=/dev/null
     [ "$2" = bulk ] && [ -n "$FAKE_WRANGLER_LOG" ] && out="$FAKE_WRANGLER_LOG.bulk"
     cat > "$out"; echo "✨ Success! Uploaded secret $3";;
-  delete) echo "Successfully deleted $3";;
+  delete)
+    if [ "$FAKE_WRANGLER_DELETE_FAIL" = 1 ]; then echo "Deletion refused" >&2; exit 1; fi
+    echo "Successfully deleted $3";;
   *) echo "unknown: $*" >&2; exit 1;;
 esac

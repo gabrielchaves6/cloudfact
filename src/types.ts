@@ -9,6 +9,9 @@ export type DeployMode = 'dir' | 'file' | 'proxy';
 export type Visibility = 'public' | 'private' | 'access' | 'app-login';
 /** Static files uploaded/served, or an app with its own server behind the proxy. */
 export type DeployKind = 'static' | 'app';
+/** Where a deploy is actually served from: Cloudflare's edge, this machine (through a tunnel), or another
+ *  machine reached over SSH from this one. */
+export type DeployOrigin = 'cloudflare' | 'vm' | 'ssh';
 export type DeployStatus = 'starting' | 'running' | 'reconnecting' | 'stopped' | 'dead' | 'error' | 'deploying' | 'deployed';
 
 export interface DeployState {
@@ -50,6 +53,8 @@ export interface DeployState {
   sshPid?: number | null;
   // workers
   files?: number;
+  /** Total size of the files published, in bytes. */
+  bytes?: number;
   /** Project this deploy belongs to in the account catalog. */
   project?: string | null;
   /** How to get into the app behind the link (its own login, not cloudfact's). Never leaves this machine
@@ -61,6 +66,8 @@ export interface DeployState {
   deployedAt?: string;
   /** Catalog page only: its Worker holds the secrets that let the page turn deploys off and on. */
   control?: boolean;
+  /** Internal service tunnel, never listed as a user deploy. */
+  internal?: boolean;
 }
 
 /** State without the private key (privateUrl already carries it), the switch's key and the sign-in key. */
@@ -126,6 +133,10 @@ export interface CatalogEntry {
   visibility: Visibility;
   kind: DeployKind;
   hasAssets: boolean;
+  /** Size of the published files in bytes; null for an app (nothing is uploaded) or when unknown. */
+  bytes?: number | null;
+  /** Where the deploy is served from. */
+  origin?: DeployOrigin;
   createdAt: string | null;
   modifiedAt: string | null;
   backend: Backend;
@@ -134,6 +145,7 @@ export interface CatalogEntry {
   off: boolean;
   /** The catalog page can turn this deploy off and on (a catalog behind sign-in only). */
   switchable?: boolean;
+  removable?: boolean;
   /** Link that opens the page already unlocked (carries the private key). Only for a gated catalog. */
   openUrl?: string | null;
   /** The app's own login, shown on a catalog page that is behind sign-in. */
@@ -165,6 +177,7 @@ export interface Credentials {
 export interface ControlTargets {
   workers: string[];
   tunnels: Record<string, { url: string; key: string }>;
+  manager?: { url: string; key: string; cookieKey: string; names: string[] };
 }
 
 export interface PowerResult {

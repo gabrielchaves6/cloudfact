@@ -76,9 +76,10 @@ describe('the switch on the catalog page', () => {
     const { publishCatalog } = await import('../src/cloudfact.js');
     await publishCatalog({ name: 'cloudfacts' });
     const html = fs.readFileSync(path.join(home, 'catalog', 'index.html'), 'utf8');
-    expect(html).toContain('<body data-control="1">');
+    expect(html).toContain('<body class="list" data-control="1">');
     expect(html).toContain('aria-label="Turn off site"');
     expect(html).not.toContain('aria-label="Turn off cloudfacts"');
+    expect(html).not.toContain('data-name="cloudfacts"');
     const secrets = JSON.parse(fs.readFileSync(`${log}.secrets`, 'utf8'));
     expect(JSON.parse(secrets.CLOUDFACT_CONTROL_TARGETS)).toEqual({ workers: ['site'], tunnels: {} });
   });
@@ -88,7 +89,7 @@ describe('the switch on the catalog page', () => {
     fs.rmSync(`${log}.secrets`, { force: true });
     await publishCatalog({ name: 'open-catalog', public: true });
     const html = fs.readFileSync(path.join(home, 'catalog', 'index.html'), 'utf8');
-    expect(html).toContain('</head><body>');
+    expect(html).toContain('</head><body class="list">');
     expect(html).not.toContain('aria-label="Turn off');
     expect(fs.existsSync(`${log}.secrets`)).toBe(false);
   });

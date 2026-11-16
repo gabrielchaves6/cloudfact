@@ -80,10 +80,24 @@ describe('workers backend (fake wrangler)', () => {
     expect(resolveBackend('pages')).toBe('workers');
     expect(resolveBackend('auto')).toBe('workers'); // token in env
   });
+  it('preserves the record when the provider refuses deletion', async () => {
+    const { remove, readState } = await import('../src/cloudfact.js').then(async (cf) => ({
+      ...cf,
+      ...(await import('../src/services/state.js')),
+    }));
+    process.env.FAKE_WRANGLER_DELETE_FAIL = '1';
+    try {
+      await expect(remove('priv-site')).rejects.toThrow('failed to delete worker');
+      expect(readState('priv-site')).not.toBeNull();
+    } finally {
+      delete process.env.FAKE_WRANGLER_DELETE_FAIL;
+    }
+  });
   it('remove deletes the worker and the record', async () => {
     const { remove, listDeploys } = await import('../src/cloudfact.js');
     const r = await remove('meu-site');
     expect(r.remote).toBe('worker deleted');
+    expect(fs.existsSync(path.join(site, 'index.html'))).toBe(true); // original source is preserved
     expect(fs.readFileSync(wranglerLog, 'utf8')).toContain('delete --name meu-site --force');
     expect(
       listDeploys()

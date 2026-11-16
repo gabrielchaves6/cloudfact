@@ -127,6 +127,7 @@ cloudfact catalog                                   # everything in the account,
 cloudfact catalog --project migracao --json         # one project, machine readable
 cloudfact project painel financeiro                 # move it, no redeploy
 cloudfact catalog --publish                         # publish the page; later deploys refresh it
+cloudfact catalog --publish --manage                # enable deletion and moving between projects from the page
 ```
 
 Each entry says what the deploy is and who can open it: **Public**, **Private link** (key-gated),
@@ -138,7 +139,12 @@ machine itself: cloudfact asks the running `cloudflared` processes for their pub
 surfaces pages still serving from here that this machine has no record of (flagged `no local record`:
 published by an older cloudfact, from another folder, or by another tool), next to the ones it does
 know (`local tunnel`). `--publish` deploys the
-catalog as a page with a card per deploy, search, a list view and a filter per project. Each card shows a
+catalog as a page with one unified list of cloudfacts, most recently updated first. Each row shows its
+project, its **size** (the published files, in MB; apps upload none) and **where it is served from**:
+**Cloudflare** (files hosted on Cloudflare), **VM** (this machine, through a tunnel) or **SSH** (an app on
+another machine reached from this one). Column headers sort by any of these, and their filter icons combine
+with search. A deploy records its size in a script tag, so any machine can show it. The alternative grid
+view keeps thumbnails. Each card shows a
 real thumbnail, captured when the catalog is published from whatever this machine can already read: the
 published folder, the app's own port, or the URL with its private key. Thumbnails render with scripts off in a sandboxed frame, and a deploy this
 machine cannot see falls back to a monogram. The page never points a frame at a live site: doing so lets
@@ -168,11 +174,12 @@ every request with a short "this page is off" page, WebSockets included, so its 
 `trycloudflare.com` address survives the pause. Deploying it again also turns it on. `stop` and `rm`
 are still there when you want the local process ended or the deploy gone. MCP tool: `power`.
 
-**From the catalog page.** On a catalog behind sign-in, every card that can be switched has a ✕ in its
-corner: one click and a confirmation turn it off, and an off card shows `Off` and a **Turn on** button.
+**From the catalog page.** The page defaults to a list and omits its own deployment. Each controllable
+deploy has an on/off toggle; `Off` means paused, with the same link reserved. Copy and Login are compact
+text actions.
 The page reads the live position of every switch when it opens, so it stays right after a change made
 elsewhere. For that, the catalog's Worker holds your API token as an encrypted Worker secret, together
-with the list of what it may switch; it does nothing else with it:
+with the list of what it may switch:
 
 - It switches only the deploys on that list: the Workers in the account, and the tunnels this machine
   serves (through their host, with a control key of their own, which is not the private key: whoever holds
@@ -181,6 +188,15 @@ with the list of what it may switch; it does nothing else with it:
   and the page's own origin), so another site cannot use your sign-in to switch anything.
 - A catalog published with `--public`, or behind a key link, gets neither the switch nor the token;
   republishing a catalog without the switch removes both from its Worker.
+
+With `catalog --publish --manage`, each managed row also has a project-folder icon before Copy,
+and a separate trash icon for permanent deletion. A project can be chosen, created by typing a new
+name, or cleared by leaving it blank. Deletion asks for confirmation and removes the published Worker
+(or stops the local tunnel) and its local deployment record; the original source files are kept. The
+catalog is republished after each change. A private management tunnel connects the signed-in catalog
+Worker to this machine, so these actions require this machine to stay running. Its URL and keys are
+Worker secrets and its internal tunnel is never listed. The option is remembered for later refreshes.
+Untracked tunnels published by another tool cannot be managed until registered with cloudfact.
 
 Tunnels started by a cloudfact older than this feature have no switch until they are started again
 (`--restart`); their cards simply have no ✕.

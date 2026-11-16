@@ -181,6 +181,31 @@ describe('the catalog Worker switches deploys off and on', () => {
     expect(await (await call('/.cloudfact/state', {}, e)).json()).toEqual({ deploys: { tun: { error: 'unreachable' } } });
   });
 
+  it('requires same-origin sign-in and confirmation for deletion, then forwards only authorized names', async () => {
+    const manager = { url: 'https://manager.example', key: 'manager-secret', cookieKey: 'tunnel-secret', names: ['site', 'tun'] };
+    const e = { ...env, CLOUDFACT_CONTROL_TARGETS: JSON.stringify({ workers: ['site'], tunnels: {}, manager }) };
+    const request = (body: unknown, headers: Record<string, string> = {}) =>
+      call(
+        '/.cloudfact/remove',
+        {
+          method: 'POST',
+          body,
+          headers: { origin: ORIGIN, ...headers },
+        },
+        e,
+      );
+    expect((await request({ name: 'site', confirm: 'site' }, { cookie: '' })).status).toBe(401);
+    expect((await request({ name: 'site', confirm: 'site' }, { origin: 'https://evil.example' })).status).toBe(403);
+    expect((await request({ name: 'site' })).status).toBe(400);
+    expect((await request({ name: 'cloudfacts', confirm: 'cloudfacts' })).status).toBe(404);
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ name: 'site', removed: true })));
+    expect(await (await request({ name: 'site', confirm: 'site' })).json()).toEqual({ name: 'site', removed: true });
+    const [url, init] = vi.mocked(fetch).mock.calls.at(-1)!;
+    expect(url).toBe('https://manager.example/remove');
+    expect(new Headers(init?.headers).get('authorization')).toBe('Bearer manager-secret');
+    expect(new Headers(init?.headers).get('cookie')).toBe('cloudfact_access=tunnel-secret');
+  });
+
   it('without the switch, /.cloudfact/ answers nothing and the page is served as before', async () => {
     const plain = { ...env, CLOUDFACT_CONTROL: undefined, CLOUDFACT_API_TOKEN: undefined };
     expect((await call('/.cloudfact/state', {}, plain)).status).toBe(404);

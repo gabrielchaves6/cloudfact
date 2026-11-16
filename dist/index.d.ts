@@ -12,6 +12,9 @@ type DeployMode = 'dir' | 'file' | 'proxy';
 type Visibility = 'public' | 'private' | 'access' | 'app-login';
 /** Static files uploaded/served, or an app with its own server behind the proxy. */
 type DeployKind = 'static' | 'app';
+/** Where a deploy is actually served from: Cloudflare's edge, this machine (through a tunnel), or another
+ *  machine reached over SSH from this one. */
+type DeployOrigin = 'cloudflare' | 'vm' | 'ssh';
 type DeployStatus = 'starting' | 'running' | 'reconnecting' | 'stopped' | 'dead' | 'error' | 'deploying' | 'deployed';
 interface DeployState {
     name: string;
@@ -49,6 +52,8 @@ interface DeployState {
     forwardPort?: number | null;
     sshPid?: number | null;
     files?: number;
+    /** Total size of the files published, in bytes. */
+    bytes?: number;
     /** Project this deploy belongs to in the account catalog. */
     project?: string | null;
     /** How to get into the app behind the link (its own login, not cloudfact's). Never leaves this machine
@@ -70,6 +75,8 @@ interface DeployState {
     deployedAt?: string;
     /** Catalog page only: its Worker holds the secrets that let the page turn deploys off and on. */
     control?: boolean;
+    /** Internal service tunnel, never listed as a user deploy. */
+    internal?: boolean;
 }
 /** State without the private key (privateUrl already carries it), the switch's key and the sign-in key. */
 type DeploySummary = Omit<DeployState, 'key' | 'controlKey' | 'sessionSecret'>;
@@ -132,6 +139,10 @@ interface CatalogEntry {
     visibility: Visibility;
     kind: DeployKind;
     hasAssets: boolean;
+    /** Size of the published files in bytes; null for an app (nothing is uploaded) or when unknown. */
+    bytes?: number | null;
+    /** Where the deploy is served from. */
+    origin?: DeployOrigin;
     createdAt: string | null;
     modifiedAt: string | null;
     backend: Backend;
@@ -140,6 +151,7 @@ interface CatalogEntry {
     off: boolean;
     /** The catalog page can turn this deploy off and on (a catalog behind sign-in only). */
     switchable?: boolean;
+    removable?: boolean;
     /** Link that opens the page already unlocked (carries the private key). Only for a gated catalog. */
     openUrl?: string | null;
     /** The app's own login, shown on a catalog page that is behind sign-in. */
@@ -178,6 +190,12 @@ interface ControlTargets {
         url: string;
         key: string;
     }>;
+    manager?: {
+        url: string;
+        key: string;
+        cookieKey: string;
+        names: string[];
+    };
 }
 interface PowerResult {
     name: string;
@@ -186,21 +204,13 @@ interface PowerResult {
     note?: string;
 }
 
-declare function listDeploys(): DeployState[];
+declare function listDeploys(opts?: {
+    includeInternal?: boolean;
+}): DeployState[];
 declare function summarize(state: DeployState): DeploySummary;
 declare function readLogs(name: string, lines?: number): Record<string, string>;
 
 declare const VERSION: string;
-
-/**
- * Account-wide catalog: every cloudfact deploy that lives in the Cloudflare account, not just the ones
- * this machine remembers. Cloudflare Workers carry script tags, so cloudfact marks what it creates with
- * `cloudfact` plus `cloudfact:project:<project>`; listing the account's scripts is then enough to rebuild
- * the whole picture from any machine, even after a reinstall.
- *
- * Quick tunnels have no account-side resource: they exist only while the machine that started them runs,
- * so they can only ever come from local state (`local: true`, `inAccount: false`).
- */
 
 /**
  * The account's cloudfact deploys, grouped by project, merged with what this machine knows.
@@ -305,6 +315,7 @@ declare function publishCatalog(opts?: {
     access?: string[];
     public?: boolean;
     title?: string;
+    manage?: boolean;
 }): Promise<DeployResult>;
 /**
  * Issues a new private key (and optional expiry) for a live tunnel deploy without restarting it: the old
@@ -407,4 +418,4 @@ interface ToolDefinition<Schema extends ZodRawShape = ZodRawShape> {
 
 declare const tools: ToolDefinition<any>[];
 
-export { type Backend, type BackendChoice, type CatalogEntry, type CatalogResult, type ControlTargets, type Credentials, type DeployKind, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type ExposeOptions, type PowerResult, type SshTarget, type StatusResult, type ToolDefinition, VERSION, type Visibility, catalog, catalogHint, createServer, deploy, doctor, expose, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, power, publishCatalog, readLogs, refreshCatalogPage, remove, resolveBackend, rotate, setCredentials, setMailKey, setProject, setupCodex, status, stop, stopAll, summarize, tools, withControl, withLocalSecrets };
+export { type Backend, type BackendChoice, type CatalogEntry, type CatalogResult, type ControlTargets, type Credentials, type DeployKind, type DeployMode, type DeployOptions, type DeployOrigin, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type ExposeOptions, type PowerResult, type SshTarget, type StatusResult, type ToolDefinition, VERSION, type Visibility, catalog, catalogHint, createServer, deploy, doctor, expose, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, power, publishCatalog, readLogs, refreshCatalogPage, remove, resolveBackend, rotate, setCredentials, setMailKey, setProject, setupCodex, status, stop, stopAll, summarize, tools, withControl, withLocalSecrets };

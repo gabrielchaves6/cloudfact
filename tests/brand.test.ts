@@ -75,7 +75,7 @@ describe('a page that asks for its own login', () => {
       ],
     });
     expect(html).toContain('App login');
-    expect(html).not.toContain('>Public<');
+    expect(html).not.toContain('class="pill vis-public"');
     expect(html).toContain('cloudfact creds');
   });
 });

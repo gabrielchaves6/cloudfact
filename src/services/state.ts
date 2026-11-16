@@ -17,6 +17,25 @@ export function slug(input: string): string {
   );
 }
 
+/** Bytes of the regular files under `p` (or of `p` itself), skipping symlinks. null when it does not exist. */
+export function pathBytes(p: string | null | undefined): number | null {
+  if (!p) return null;
+  let st: fs.Stats;
+  try {
+    st = fs.lstatSync(p);
+  } catch {
+    return null;
+  }
+  if (st.isFile()) return st.size;
+  if (!st.isDirectory()) return null;
+  let total = 0;
+  for (const entry of fs.readdirSync(p, { withFileTypes: true })) {
+    if (entry.isSymbolicLink()) continue;
+    total += pathBytes(path.join(p, entry.name)) ?? 0;
+  }
+  return total;
+}
+
 export function deployDir(name: string): string {
   return path.join(DEPLOYS_DIR, name);
 }
@@ -71,12 +90,12 @@ export function isLive(state: DeployState | null): state is DeployState {
   return Boolean(state && LIVE.has(state.status));
 }
 
-export function listDeploys(): DeployState[] {
+export function listDeploys(opts: { includeInternal?: boolean } = {}): DeployState[] {
   if (!fs.existsSync(DEPLOYS_DIR)) return [];
   return fs
     .readdirSync(DEPLOYS_DIR)
     .map(effectiveState)
-    .filter((s): s is DeployState => s !== null)
+    .filter((s): s is DeployState => s !== null && (!s.internal || opts.includeInternal === true))
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 

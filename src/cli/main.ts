@@ -8,7 +8,7 @@ usage:
   cloudfact expose <port> [--name n] [--public] [--access a@x.com,b@y.com] [--expires 24h] [--project p] [--ssh user@host] [--ssh-port 22] [--identity key] [--strict-host-key] [--restart] [--json]
   cloudfact rotate <name> [--expires 24h]
   cloudfact list [--json]
-  cloudfact catalog [--project p] [--publish] [--access a@x.com] [--json]
+  cloudfact catalog [--project p] [--publish] [--manage] [--access a@x.com] [--json]
                                                  (every cloudfact in the Cloudflare account, grouped by project;
                                                   --publish turns the catalog itself into a page)
   cloudfact project <name> <project|->            (file a deploy under a project; "-" clears it)
@@ -66,6 +66,7 @@ export async function main(argv: string[]): Promise<number> {
       note: { type: 'string' },
       clear: { type: 'boolean' },
       codex: { type: 'boolean' },
+      manage: { type: 'boolean' },
     },
   });
   const [cmd, ...rest] = positionals;
@@ -80,6 +81,11 @@ export async function main(argv: string[]): Promise<number> {
     return 0;
   }
   switch (cmd) {
+    case '_catalog-manager': {
+      const { runCatalogManager } = await import('../services/catalog-manager.js');
+      await runCatalogManager();
+      return 0;
+    }
     case 'deploy': {
       const r = await cf.deploy({
         path: rest[0],
@@ -137,6 +143,7 @@ export async function main(argv: string[]): Promise<number> {
     case 'catalog': {
       if (values.publish) {
         const r = await cf.publishCatalog({
+          manage: values.manage,
           name: values.name,
           project: values.project,
           access: values.access ? values.access.split(',') : undefined,

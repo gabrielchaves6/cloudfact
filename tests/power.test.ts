@@ -311,15 +311,15 @@ describe('what the catalog page may switch', () => {
       entry({ name: 'shown' }),
     ]);
     const html = galleryHtml(c, { control: true });
-    expect(html).toContain('<body data-control="1">');
+    expect(html).toContain('<body class="list" data-control="1">');
     expect(html).toContain('aria-label="Turn off awake"');
-    expect(html).toContain('aria-label="Turn off resting"');
+    expect(html).toContain('aria-label="Turn on resting"');
     expect(html).not.toContain('aria-label="Turn off shown"'); // not on the list the Worker got
     expect(html).toContain('<div class="card off" data-name="resting" data-switch="1"');
     expect(html.indexOf('data-name="awake"')).toBeLessThan(html.indexOf('data-name="resting"'));
 
     const plain = galleryHtml(c);
-    expect(plain).toContain('</head><body>');
+    expect(plain).toContain('</head><body class="list">');
     expect(plain).not.toContain('data-switch="1"');
     expect(plain).not.toContain('aria-label="Turn off');
     expect(plain).toContain('<div class="card off" data-name="resting"'); // still says it is off
