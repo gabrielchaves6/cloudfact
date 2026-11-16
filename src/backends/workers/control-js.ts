@@ -19,7 +19,7 @@ const answer = (status, body) => reply(status, JSON.stringify(body), { 'content-
 function controlTargets(env) {
   try {
     const t = JSON.parse(env.CLOUDFACT_CONTROL_TARGETS || '{}');
-    return { workers: Array.isArray(t.workers) ? t.workers : [], tunnels: t.tunnels && typeof t.tunnels === 'object' ? t.tunnels : {} };
+    return { workers: Array.isArray(t.workers) ? t.workers : [], tunnels: t.tunnels && typeof t.tunnels === 'object' ? t.tunnels : {}, manager: t.manager };
   } catch {
     return { workers: [], tunnels: {} };
   }
@@ -57,6 +57,18 @@ async function switchTunnel(t, on) {
   if (!res.ok) throw new Error('the tunnel answered HTTP ' + res.status);
   return (await res.json()).on !== false;
 }
+async function manageCatalog(manager, path, body) {
+  const res = await fetch(manager.url + path, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: { authorization: 'Bearer ' + manager.key, cookie: 'cloudfact_access=' + manager.cookieKey, 'content-type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(120000),
+  });
+  let data;
+  try { data = await res.json(); } catch { throw new Error('The management service did not answer. Try again.'); }
+  if (!res.ok) throw new Error(data.message || data.error || 'HTTP ' + res.status);
+  return data;
+}
 async function control(request, env, url) {
   if (env.CLOUDFACT_CONTROL !== '1' || !env.CLOUDFACT_ACCOUNT_ID || !env.CLOUDFACT_API_TOKEN) return answer(404, { error: 'not_enabled' });
   const origin = request.headers.get('origin');
@@ -77,7 +89,21 @@ async function control(request, env, url) {
           }
         }),
       );
+      if (targets.manager) {
+        try {
+          const state = await manageCatalog(targets.manager, '/state');
+          for (const name of targets.manager.names) if (!state.names.includes(name)) deploys[name] = { removed: true };
+        } catch { /* the account's switches still work if the publishing machine is unreachable */ }
+      }
       return answer(200, { deploys });
+    }
+    if (['/.cloudfact/remove', '/.cloudfact/project'].includes(url.pathname) && request.method === 'POST') {
+      let body;
+      try { body = await request.json(); } catch { return answer(400, { error: 'bad_request' }); }
+      if (!body || typeof body.name !== 'string') return answer(400, { error: 'bad_request' });
+      if (!targets.manager || !targets.manager.names.includes(body.name)) return answer(404, { error: 'unknown' });
+      if (url.pathname.endsWith('/remove') && body.confirm !== body.name) return answer(400, { error: 'confirmation_required' });
+      return answer(200, await manageCatalog(targets.manager, url.pathname.replace('/.cloudfact', ''), body));
     }
     if (url.pathname === '/.cloudfact/power' && request.method === 'POST') {
       let body = null;

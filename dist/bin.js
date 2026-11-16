@@ -187,6 +187,23 @@ import path3 from "path";
 function slug(input) {
   return input.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "site";
 }
+function pathBytes(p) {
+  if (!p) return null;
+  let st;
+  try {
+    st = fs3.lstatSync(p);
+  } catch {
+    return null;
+  }
+  if (st.isFile()) return st.size;
+  if (!st.isDirectory()) return null;
+  let total = 0;
+  for (const entry of fs3.readdirSync(p, { withFileTypes: true })) {
+    if (entry.isSymbolicLink()) continue;
+    total += pathBytes(path3.join(p, entry.name)) ?? 0;
+  }
+  return total;
+}
 function deployDir(name) {
   return path3.join(DEPLOYS_DIR, name);
 }
@@ -232,9 +249,9 @@ function effectiveState(name) {
 function isLive(state) {
   return Boolean(state && LIVE.has(state.status));
 }
-function listDeploys() {
+function listDeploys(opts = {}) {
   if (!fs3.existsSync(DEPLOYS_DIR)) return [];
-  return fs3.readdirSync(DEPLOYS_DIR).map(effectiveState).filter((s) => s !== null).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  return fs3.readdirSync(DEPLOYS_DIR).map(effectiveState).filter((s) => s !== null && (!s.internal || opts.includeInternal === true)).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 function summarize(state) {
   const { key: _key, controlKey: _controlKey, sessionSecret: _sessionSecret, ...rest } = state;
@@ -278,6 +295,7 @@ async function deployTunnel(t) {
   }
   if (!findCloudflared(readConfig())) await installCloudflared(log.info);
   const state = {
+    ...t.internal ? { internal: true } : {},
     name: t.name,
     backend: "tunnel",
     mode: t.mode,
@@ -361,6 +379,11 @@ var init_tunnel = __esm({
 
 // src/backends/tunnel/gate.ts
 import crypto2 from "crypto";
+function timingEqual(a, b) {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && crypto2.timingSafeEqual(x, y);
+}
 var FAVICON, MARK, PAGE_HEAD, OFF_HTML, GATE_HTML;
 var init_gate = __esm({
   "src/backends/tunnel/gate.ts"() {
@@ -466,7 +489,7 @@ const answer = (status, body) => reply(status, JSON.stringify(body), { 'content-
 function controlTargets(env) {
   try {
     const t = JSON.parse(env.CLOUDFACT_CONTROL_TARGETS || '{}');
-    return { workers: Array.isArray(t.workers) ? t.workers : [], tunnels: t.tunnels && typeof t.tunnels === 'object' ? t.tunnels : {} };
+    return { workers: Array.isArray(t.workers) ? t.workers : [], tunnels: t.tunnels && typeof t.tunnels === 'object' ? t.tunnels : {}, manager: t.manager };
   } catch {
     return { workers: [], tunnels: {} };
   }
@@ -504,6 +527,18 @@ async function switchTunnel(t, on) {
   if (!res.ok) throw new Error('the tunnel answered HTTP ' + res.status);
   return (await res.json()).on !== false;
 }
+async function manageCatalog(manager, path, body) {
+  const res = await fetch(manager.url + path, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: { authorization: 'Bearer ' + manager.key, cookie: 'cloudfact_access=' + manager.cookieKey, 'content-type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(120000),
+  });
+  let data;
+  try { data = await res.json(); } catch { throw new Error('The management service did not answer. Try again.'); }
+  if (!res.ok) throw new Error(data.message || data.error || 'HTTP ' + res.status);
+  return data;
+}
 async function control(request, env, url) {
   if (env.CLOUDFACT_CONTROL !== '1' || !env.CLOUDFACT_ACCOUNT_ID || !env.CLOUDFACT_API_TOKEN) return answer(404, { error: 'not_enabled' });
   const origin = request.headers.get('origin');
@@ -524,7 +559,21 @@ async function control(request, env, url) {
           }
         }),
       );
+      if (targets.manager) {
+        try {
+          const state = await manageCatalog(targets.manager, '/state');
+          for (const name of targets.manager.names) if (!state.names.includes(name)) deploys[name] = { removed: true };
+        } catch { /* the account's switches still work if the publishing machine is unreachable */ }
+      }
       return answer(200, { deploys });
+    }
+    if (['/.cloudfact/remove', '/.cloudfact/project'].includes(url.pathname) && request.method === 'POST') {
+      let body;
+      try { body = await request.json(); } catch { return answer(400, { error: 'bad_request' }); }
+      if (!body || typeof body.name !== 'string') return answer(400, { error: 'bad_request' });
+      if (!targets.manager || !targets.manager.names.includes(body.name)) return answer(404, { error: 'unknown' });
+      if (url.pathname.endsWith('/remove') && body.confirm !== body.name) return answer(400, { error: 'confirmation_required' });
+      return answer(200, await manageCatalog(targets.manager, url.pathname.replace('/.cloudfact', ''), body));
     }
     if (url.pathname === '/.cloudfact/power' && request.method === 'POST') {
       let body = null;
@@ -1295,8 +1344,8 @@ export default {
 // src/services/access.ts
 function apiClient(token, fetchImpl = fetch) {
   return {
-    async request(method, path10, body) {
-      const res = await fetchImpl(API + path10, {
+    async request(method, path12, body) {
+      const res = await fetchImpl(API + path12, {
         method,
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: body === void 0 ? void 0 : JSON.stringify(body)
@@ -1308,7 +1357,7 @@ function apiClient(token, fetchImpl = fetch) {
       }
       if (!res.ok || env?.success === false) {
         const msg = env?.errors?.map((e) => `${e.code}: ${e.message}`).join("; ") || `HTTP ${res.status}`;
-        throw new Error(`Cloudflare API ${method} ${path10} failed \u2014 ${msg}`);
+        throw new Error(`Cloudflare API ${method} ${path12} failed \u2014 ${msg}`);
       }
       return env.result;
     }
@@ -1452,6 +1501,7 @@ var init_local_tunnels = __esm({
 });
 
 // src/services/catalog.ts
+import path5 from "path";
 function projectTag(project) {
   return PROJECT_TAG + slugProject(project);
 }
@@ -1465,6 +1515,7 @@ function tagsFor(opts = {}) {
   if (opts.kind) tags.push(KIND_TAG + opts.kind);
   if (opts.catalog) tags.push(CATALOG_TAG);
   if (opts.off) tags.push(OFF_TAG);
+  if (typeof opts.bytes === "number" && Number.isFinite(opts.bytes) && opts.bytes >= 0) tags.push(SIZE_TAG + Math.round(opts.bytes));
   return tags;
 }
 function projectFromTags(tags) {
@@ -1478,8 +1529,8 @@ function bearer(cfg = readConfig()) {
   if (oauth) return { token: oauth, accountId: creds?.accountId ?? cfg.cloudflareAccountId ?? null };
   return null;
 }
-async function api(token, method, path10, body, fetchImpl = fetch) {
-  const res = await fetchImpl(API2 + path10, {
+async function api(token, method, path12, body, fetchImpl = fetch) {
+  const res = await fetchImpl(API2 + path12, {
     method,
     headers: { Authorization: `Bearer ${token}`, ...body === void 0 ? {} : { "Content-Type": "application/json" } },
     body: body === void 0 ? void 0 : JSON.stringify(body)
@@ -1491,7 +1542,7 @@ async function api(token, method, path10, body, fetchImpl = fetch) {
   }
   if (!res.ok || env?.success === false) {
     const msg = env?.errors?.map((e) => `${e.code}: ${e.message}`).join("; ") || `HTTP ${res.status}`;
-    throw new Error(`Cloudflare API ${method} ${path10} failed \u2014 ${msg}`);
+    throw new Error(`Cloudflare API ${method} ${path12} failed \u2014 ${msg}`);
   }
   return env.result;
 }
@@ -1506,6 +1557,16 @@ function visibilityOf(s) {
 }
 function kindOf(s) {
   return s.mode === "proxy" ? "app" : "static";
+}
+function localBytes(s) {
+  if (s.mode === "proxy") return null;
+  if (typeof s.bytes === "number") return s.bytes;
+  if (s.backend === "workers") return pathBytes(path5.join(deployDir(s.name), "site"));
+  return pathBytes(s.mode === "file" ? s.file : s.root);
+}
+function originOf(s) {
+  if (s.backend !== "tunnel") return "cloudflare";
+  return s.ssh ? "ssh" : "vm";
 }
 async function catalog(opts = {}) {
   const cfg = readConfig();
@@ -1535,6 +1596,7 @@ async function catalog(opts = {}) {
     const host = url ? new URL(url).host : null;
     const app = host ? apps.find((a) => a.domain === host + LOGIN_PATH) ?? apps.find((a) => a.domain === host) : void 0;
     const visibility = tagValue(s.tags, VIS_TAG) ?? (state ? visibilityOf(state) : app ? "access" : "public");
+    const kind = tagValue(s.tags, KIND_TAG) ?? (state ? kindOf(state) : s.has_assets ? "static" : "app");
     entries.push({
       name: s.id,
       project: projectFromTags(s.tags) ?? state?.project ?? null,
@@ -1543,8 +1605,11 @@ async function catalog(opts = {}) {
       local: Boolean(state),
       access: app ? { emails: state?.access?.emails ?? [], appId: app.id } : null,
       visibility,
-      kind: tagValue(s.tags, KIND_TAG) ?? (state ? kindOf(state) : s.has_assets ? "static" : "app"),
+      kind,
       hasAssets: Boolean(s.has_assets),
+      bytes: kind === "app" ? null : sizeFromTags(s.tags) ?? (state ? localBytes(state) : null),
+      // without a local record, a Worker with no files of its own is the sign-in front of a tunnel elsewhere
+      origin: state ? originOf(state) : kind === "app" && !s.has_assets ? "vm" : "cloudflare",
       createdAt: s.created_on ?? null,
       modifiedAt: s.modified_on ?? null,
       backend: state?.backend ?? "workers",
@@ -1565,6 +1630,8 @@ async function catalog(opts = {}) {
       visibility: visibilityOf(s),
       kind: kindOf(s),
       hasAssets: s.mode !== "proxy",
+      bytes: localBytes(s),
+      origin: originOf(s),
       createdAt: s.startedAt ?? null,
       modifiedAt: s.urlAt ?? s.startedAt ?? null,
       backend: "tunnel",
@@ -1575,6 +1642,7 @@ async function catalog(opts = {}) {
   }
   if (opts.scanLocal !== false) {
     const known = /* @__PURE__ */ new Set();
+    for (const s of listDeploys({ includeInternal: true })) if (s.internal && s.url) known.add(s.url);
     for (const e of entries) if (e.url) known.add(e.url);
     for (const s of local.values()) {
       if (s.url) known.add(s.url);
@@ -1592,6 +1660,8 @@ async function catalog(opts = {}) {
         visibility: t.gated ? "private" : t.challenges ? "app-login" : "public",
         kind: "app",
         hasAssets: false,
+        bytes: null,
+        origin: "vm",
         createdAt: null,
         modifiedAt: null,
         backend: "tunnel",
@@ -1644,7 +1714,7 @@ async function setProject(name, project, fetchImpl) {
     b.token,
     "PUT",
     `/accounts/${b.accountId}/workers/scripts/${encodeURIComponent(name)}/tags`,
-    tagsFor({ project, visibility: current.visibility, kind: current.kind, off: current.off }),
+    tagsFor({ project, visibility: current.visibility, kind: current.kind, off: current.off, bytes: current.bytes }),
     fetchImpl
   );
   const found = (await catalog({ fetchImpl })).projects.flatMap((p) => p.deploys).find((d) => d.name === name);
@@ -1661,7 +1731,7 @@ async function switchWorker(name, on, opts = {}) {
   await api(b.token, "POST", `${script}/subdomain`, { enabled: on, previews_enabled: false }, opts.fetchImpl);
   await api(b.token, "PUT", `${script}/tags`, [...tags.filter((t) => t !== OFF_TAG), ...on ? [] : [OFF_TAG]], opts.fetchImpl);
 }
-var API2, TAG, PROJECT_TAG, VIS_TAG, CATALOG_TAG, KIND_TAG, OFF_TAG, tagValue;
+var API2, TAG, PROJECT_TAG, VIS_TAG, CATALOG_TAG, KIND_TAG, SIZE_TAG, OFF_TAG, tagValue, sizeFromTags;
 var init_catalog = __esm({
   "src/services/catalog.ts"() {
     "use strict";
@@ -1676,15 +1746,20 @@ var init_catalog = __esm({
     VIS_TAG = "cloudfact:vis:";
     CATALOG_TAG = "cloudfact:catalog";
     KIND_TAG = "cloudfact:kind:";
+    SIZE_TAG = "cloudfact:size:";
     OFF_TAG = "cloudfact:off";
     tagValue = (tags, prefix) => (tags ?? []).find((t) => t.startsWith(prefix))?.slice(prefix.length) || null;
+    sizeFromTags = (tags) => {
+      const n = Number(tagValue(tags, SIZE_TAG));
+      return tagValue(tags, SIZE_TAG) !== null && Number.isFinite(n) && n >= 0 ? n : null;
+    };
   }
 });
 
 // src/backends/workers/index.ts
 import crypto3 from "crypto";
 import fs6 from "fs";
-import path5 from "path";
+import path6 from "path";
 function sessionSecret(name) {
   const s = readState(name);
   if (s?.sessionSecret) return s.sessionSecret;
@@ -1693,7 +1768,7 @@ function sessionSecret(name) {
   return secret;
 }
 function deployWithSecrets(args, values, opts) {
-  const file = path5.join(opts.cwd, ".deploy-secrets.json");
+  const file = path6.join(opts.cwd, ".deploy-secrets.json");
   fs6.writeFileSync(file, JSON.stringify(values), { mode: 384 });
   try {
     return runWrangler([...args, "--secrets-file", file], opts);
@@ -1708,8 +1783,8 @@ function stageDir(src, dst) {
   const walk = (from, to) => {
     for (const entry of fs6.readdirSync(from, { withFileTypes: true })) {
       if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.isSymbolicLink()) continue;
-      const a = path5.join(from, entry.name);
-      const b = path5.join(to, entry.name);
+      const a = path6.join(from, entry.name);
+      const b = path6.join(to, entry.name);
       if (entry.isDirectory()) {
         fs6.mkdirSync(b);
         walk(a, b);
@@ -1731,14 +1806,14 @@ async function deployWorkers(t) {
     );
   }
   const dir = deployDir(t.name);
-  const site = path5.join(dir, "site");
-  const cwd = path5.join(dir, "empty");
+  const site = path6.join(dir, "site");
+  const cwd = path6.join(dir, "empty");
   fs6.mkdirSync(cwd, { recursive: true, mode: 448 });
   let files;
   if (t.mode === "file") {
     fs6.rmSync(site, { recursive: true, force: true });
     fs6.mkdirSync(site, { recursive: true });
-    fs6.copyFileSync(t.file, path5.join(site, "index.html"));
+    fs6.copyFileSync(t.file, path6.join(site, "index.html"));
     files = 1;
   } else {
     files = stageDir(t.root, site);
@@ -1754,17 +1829,18 @@ async function deployWorkers(t) {
     file: t.file,
     status: "deploying",
     startedAt: prev?.startedAt ?? (/* @__PURE__ */ new Date()).toISOString(),
-    files
+    files,
+    bytes: pathBytes(site) ?? void 0
   });
   const compatibilityDate = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-  const logFile = path5.join(dir, "wrangler.log");
+  const logFile = path6.join(dir, "wrangler.log");
   let r;
   let access = null;
   const accessCtx = t.access?.length ? accessContext(cfg) : null;
   const control = accessCtx ? t.control ?? null : null;
   const deployAccessWorker = (app) => {
-    const workerDir = path5.join(dir, "worker");
-    const args = ["deploy", "--config", path5.join(workerDir, "wrangler.jsonc"), ...accessVars(app)];
+    const workerDir = path6.join(dir, "worker");
+    const args = ["deploy", "--config", path6.join(workerDir, "wrangler.jsonc"), ...accessVars(app)];
     const values = { CLOUDFACT_SESSION_SECRET: sessionSecret(t.name) };
     if (control) {
       values.CLOUDFACT_API_TOKEN = control.token;
@@ -1776,18 +1852,18 @@ async function deployWorkers(t) {
   if (accessCtx) {
     const domain = `${t.name}.${await workersSubdomain(accessCtx)}.workers.dev`;
     access = await upsertAccessApp(accessCtx, { name: t.name, domain, emails: t.access });
-    const workerDir = path5.join(dir, "worker");
+    const workerDir = path6.join(dir, "worker");
     fs6.mkdirSync(workerDir, { recursive: true, mode: 448 });
-    fs6.writeFileSync(path5.join(workerDir, "index.js"), WORKER_SOURCE);
-    fs6.writeFileSync(path5.join(workerDir, "wrangler.jsonc"), wranglerConfig(t.name, compatibilityDate));
+    fs6.writeFileSync(path6.join(workerDir, "index.js"), WORKER_SOURCE);
+    fs6.writeFileSync(path6.join(workerDir, "wrangler.jsonc"), wranglerConfig(t.name, compatibilityDate));
     r = deployAccessWorker(access);
   } else if (t.private) {
-    const workerDir = path5.join(dir, "worker");
+    const workerDir = path6.join(dir, "worker");
     fs6.mkdirSync(workerDir, { recursive: true, mode: 448 });
-    fs6.writeFileSync(path5.join(workerDir, "index.js"), WORKER_SOURCE);
-    fs6.writeFileSync(path5.join(workerDir, "wrangler.jsonc"), wranglerConfig(t.name, compatibilityDate));
+    fs6.writeFileSync(path6.join(workerDir, "index.js"), WORKER_SOURCE);
+    fs6.writeFileSync(path6.join(workerDir, "wrangler.jsonc"), wranglerConfig(t.name, compatibilityDate));
     const vars = t.keyExpiresAt ? ["--var", `CLOUDFACT_KEY_EXPIRES:${t.keyExpiresAt}`] : [];
-    r = runWrangler(["deploy", "--config", path5.join(workerDir, "wrangler.jsonc"), ...vars], { cfg, creds, cwd: workerDir, logFile });
+    r = runWrangler(["deploy", "--config", path6.join(workerDir, "wrangler.jsonc"), ...vars], { cfg, creds, cwd: workerDir, logFile });
     if (r.status === 0) {
       const s = putSecret(t.name, "CLOUDFACT_KEY", t.key, { cwd: workerDir, logFile });
       if (s.status !== 0) r = { status: s.status, text: `${r.text}
@@ -1825,7 +1901,8 @@ ${again.text.slice(-1500)}`);
     await tagWorker(t.name, {
       project: t.project ?? null,
       visibility: accessCtx ? "access" : t.private ? "private" : "public",
-      kind: t.mode === "proxy" ? "app" : "static"
+      kind: t.mode === "proxy" ? "app" : "static",
+      bytes: readState(t.name)?.bytes ?? null
     });
   } catch {
   }
@@ -1852,17 +1929,17 @@ function putSecret(name, secretName, value, opts) {
 }
 function rotateWorkersKey(name, key, keyExpiresAt) {
   const dir = deployDir(name);
-  const workerDir = path5.join(dir, "worker");
-  if (!fs6.existsSync(path5.join(workerDir, "wrangler.jsonc")))
+  const workerDir = path6.join(dir, "worker");
+  if (!fs6.existsSync(path6.join(workerDir, "wrangler.jsonc")))
     throw new Error("this Workers deploy is public; redeploy it without --public to make it private");
-  const s = putSecret(name, "CLOUDFACT_KEY", key, { cwd: workerDir, logFile: path5.join(dir, "wrangler.log") });
+  const s = putSecret(name, "CLOUDFACT_KEY", key, { cwd: workerDir, logFile: path6.join(dir, "wrangler.log") });
   if (s.status !== 0) throw new Error(`wrangler secret put failed:
 ${s.text.slice(-800)}`);
   if (keyExpiresAt !== void 0) {
     const vars = keyExpiresAt ? ["--var", `CLOUDFACT_KEY_EXPIRES:${keyExpiresAt}`] : [];
-    const r = runWrangler(["deploy", "--config", path5.join(workerDir, "wrangler.jsonc"), ...vars], {
+    const r = runWrangler(["deploy", "--config", path6.join(workerDir, "wrangler.jsonc"), ...vars], {
       cwd: workerDir,
-      logFile: path5.join(dir, "wrangler.log")
+      logFile: path6.join(dir, "wrangler.log")
     });
     if (r.status !== 0) throw new Error(`wrangler deploy failed:
 ${r.text.slice(-800)}`);
@@ -1871,16 +1948,19 @@ ${r.text.slice(-800)}`);
 async function deleteWorker(name) {
   const notes = [];
   const s = readState(name);
+  const cwd = path6.join(deployDir(name), "empty");
+  fs6.mkdirSync(cwd, { recursive: true, mode: 448 });
+  const r = runWrangler(["delete", "--name", name, "--force"], { cwd });
+  if (r.status !== 0) throw new Error(`failed to delete worker: ${r.text.slice(-400)}`);
+  notes.push("worker deleted");
   if (s?.access?.appId) {
     try {
       await deleteAccessApp(accessContext(), s.access.appId);
       notes.push("access app deleted");
     } catch (e) {
-      notes.push(`failed to delete access app: ${e.message}`);
+      throw new Error(`worker deleted, but failed to delete access app: ${e.message}`, { cause: e });
     }
   }
-  const r = runWrangler(["delete", "--name", name, "--force"], { cwd: path5.join(deployDir(name), "empty") });
-  notes.unshift(r.status === 0 ? "worker deleted" : `failed to delete worker: ${r.text.slice(-400)}`);
   return notes.join("; ");
 }
 async function deployAccessProxy(t) {
@@ -1889,13 +1969,13 @@ async function deployAccessProxy(t) {
   if (!creds) throw new Error("--access needs a Cloudflare sign-in: `cloudfact login --token <token>`");
   const ctx = accessContext(cfg);
   const dir = deployDir(t.name);
-  const workerDir = path5.join(dir, "worker");
+  const workerDir = path6.join(dir, "worker");
   fs6.mkdirSync(workerDir, { recursive: true, mode: 448 });
   const compatibilityDate = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-  fs6.writeFileSync(path5.join(workerDir, "index.js"), PROXY_WORKER_SOURCE);
-  fs6.writeFileSync(path5.join(workerDir, "wrangler.jsonc"), proxyWranglerConfig(t.name, compatibilityDate));
-  const logFile = path5.join(dir, "wrangler.log");
-  const config2 = path5.join(workerDir, "wrangler.jsonc");
+  fs6.writeFileSync(path6.join(workerDir, "index.js"), PROXY_WORKER_SOURCE);
+  fs6.writeFileSync(path6.join(workerDir, "wrangler.jsonc"), proxyWranglerConfig(t.name, compatibilityDate));
+  const logFile = path6.join(dir, "wrangler.log");
+  const config2 = path6.join(workerDir, "wrangler.jsonc");
   const secrets = { CLOUDFACT_SESSION_SECRET: sessionSecret(t.name) };
   if (t.originKey) secrets.CLOUDFACT_ORIGIN_KEY = t.originKey;
   const deployOnce = (a) => deployWithSecrets(["deploy", "--config", config2, ...accessVars(a), "--var", `CLOUDFACT_ORIGIN:${t.origin}`], secrets, {
@@ -1957,7 +2037,75 @@ var init_duration = __esm({
   }
 });
 
+// src/services/gallery-filters.ts
+function matchesCloudfact(row, filters, now = Date.now()) {
+  const query = filters.query.trim().toLowerCase();
+  const name = filters.name.trim().toLowerCase();
+  if (query && !row.search.toLowerCase().includes(query)) return false;
+  if (name && !row.name.toLowerCase().includes(name)) return false;
+  if (filters.project !== "*" && (row.project ?? "") !== filters.project) return false;
+  if (filters.visibility !== "*" && row.visibility !== filters.visibility) return false;
+  if (filters.kind !== "*" && row.kind !== filters.kind) return false;
+  if (filters.origin && filters.origin !== "*" && row.origin !== filters.origin) return false;
+  if (filters.size && filters.size !== "*") {
+    const bytes = typeof row.bytes === "number" && Number.isFinite(row.bytes) ? row.bytes : null;
+    if (filters.size === "none") {
+      if (bytes !== null) return false;
+    } else {
+      const MB = 1024 * 1024;
+      if (bytes === null) return false;
+      if (filters.size === "small" && bytes >= MB) return false;
+      if (filters.size === "medium" && (bytes < MB || bytes > 10 * MB)) return false;
+      if (filters.size === "large" && bytes <= 10 * MB) return false;
+    }
+  }
+  if (filters.modified !== "*") {
+    const time3 = row.modifiedAt ? Date.parse(row.modifiedAt) : NaN;
+    if (filters.modified === "none") return !Number.isFinite(time3);
+    const windows = { day: 864e5, week: 7 * 864e5, month: 30 * 864e5 };
+    const window = windows[filters.modified];
+    if (!window || !Number.isFinite(time3) || time3 > now || now - time3 > window) return false;
+  }
+  return true;
+}
+function compareCloudfacts(a, b, key, descending) {
+  let result = 0;
+  if (key === "modified") {
+    const at = a.modifiedAt ? Date.parse(a.modifiedAt) : NaN;
+    const bt = b.modifiedAt ? Date.parse(b.modifiedAt) : NaN;
+    if (Number.isFinite(at) !== Number.isFinite(bt)) return Number.isFinite(at) ? -1 : 1;
+    if (Number.isFinite(at)) result = at - bt;
+  } else if (key === "size") {
+    const as = typeof a.bytes === "number" && Number.isFinite(a.bytes) ? a.bytes : null;
+    const bs = typeof b.bytes === "number" && Number.isFinite(b.bytes) ? b.bytes : null;
+    if (as === null !== (bs === null)) return as === null ? 1 : -1;
+    if (as !== null && bs !== null) result = as - bs;
+  } else {
+    const value = (row) => {
+      if (key === "project") return row.project || "Sem projeto";
+      if (key === "visibility") return row.visibilityLabel ?? row.visibility;
+      if (key === "kind") return row.kindLabel ?? row.kind;
+      if (key === "origin") return row.originLabel ?? row.origin ?? "";
+      return row.name;
+    };
+    result = value(a).localeCompare(value(b), void 0, { numeric: true, sensitivity: "base" });
+  }
+  if (result) return descending ? -result : result;
+  return a.name.localeCompare(b.name, void 0, { numeric: true, sensitivity: "base" });
+}
+var init_gallery_filters = __esm({
+  "src/services/gallery-filters.ts"() {
+    "use strict";
+  }
+});
+
 // src/services/gallery.ts
+function formatBytes(bytes) {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) return "\u2014";
+  const mb = bytes / (1024 * 1024);
+  if (mb < 0.1) return "< 0,1 MB";
+  return (mb < 10 ? mb.toFixed(1) : String(Math.round(mb))).replace(".", ",") + " MB";
+}
 function galleryHtml(c, opts = {}) {
   const title = opts.title ?? "CloudFacts";
   const projects = c.projects.map((p) => p.project).filter((p) => Boolean(p));
@@ -1966,7 +2114,9 @@ function galleryHtml(c, opts = {}) {
     const snap = opts.snapshots?.[d.name];
     const preview = snap ? `<iframe srcdoc="${esc(snap)}" loading="lazy" tabindex="-1" sandbox="" title=""></iframe>` : `<div class="fallback"><div class="mono">${esc(d.name.slice(0, 2))}</div><div class="why">${d.visibility === "access" ? "sign-in required" : d.visibility === "private" ? "private link" : d.visibility === "app-login" ? "this app asks for its own login" : "no preview"}</div></div>`;
     const badge = d.untracked ? '<span class="tag">no local record</span>' : d.inAccount ? "" : '<span class="tag">local tunnel</span>';
-    const search = [d.name, d.project ?? "", d.url ?? "", VIS_LABEL[d.visibility], KIND_LABEL[d.kind]].join(" ").toLowerCase() + (d.off ? " off" : "");
+    const search = [d.name, d.project ?? "", d.url ?? "", ORIGIN_LABEL[originOf2(d)], VIS_LABEL[d.visibility], KIND_LABEL[d.kind]].join(" ").toLowerCase() + (d.off ? " off" : "");
+    const origin = originOf2(d);
+    const bytes = typeof d.bytes === "number" && Number.isFinite(d.bytes) ? d.bytes : null;
     const open = d.openUrl ?? d.url ?? "";
     const creds = d.creds ? `<div class="creds" hidden>${[
       d.creds.user ? `<div><span>user</span><code data-copy="${esc(d.creds.user)}">${esc(d.creds.user)}</code></div>` : "",
@@ -1974,40 +2124,78 @@ function galleryHtml(c, opts = {}) {
       d.creds.note ? `<div><span>note</span><code>${esc(d.creds.note)}</code></div>` : ""
     ].join("")}</div>` : "";
     const switchable = Boolean(opts.control && d.switchable);
-    const actions = `<div class="actions">
-      ${open ? `<button class="mini" data-copy="${esc(open)}">Copy link</button>` : ""}
-      ${d.creds ? '<button class="mini" data-creds>Show login</button>' : ""}
-      ${switchable ? `<button class="mini switch only-off" data-on>Turn on</button>
-      <button class="power switch only-on" data-off title="Turn off" aria-label="Turn off ${esc(d.name)}">${ICON.turnOff}</button>` : ""}
+    const manageable = Boolean(opts.control && d.removable);
+    const actions = `<div class="actions" role="cell">
+      ${manageable ? `<button class="project-button managed" data-project-edit title="Move to project" aria-label="Move ${esc(d.name)} to project">${ICON.project}</button>` : ""}
+      ${open ? `<button class="project-button" data-copy="${esc(open)}" title="Copy link" aria-label="Copy link for ${esc(d.name)}">${ICON.copy}</button>` : ""}
+      ${switchable ? `<button class="toggle switch" data-power role="switch" aria-checked="${!d.off}" title="${d.off ? "Turn on" : "Turn off"}" aria-label="${d.off ? "Turn on" : "Turn off"} ${esc(d.name)}"></button>` : ""}
+      ${manageable ? `<button class="power managed" data-remove title="Delete" aria-label="Delete ${esc(d.name)}">${ICON.remove}</button>` : ""}
+      ${d.creds ? '<button class="action-link" data-creds>Login</button>' : ""}
     </div>`;
-    const confirm = switchable ? `<div class="confirm" hidden>Turn it off? Its link stops answering until you turn it back on. Nothing is deleted.
-      <div><button class="mini danger" data-off-yes>Turn off</button><button class="mini" data-off-no>Cancel</button></div></div>
-    <p class="power-msg" hidden></p>` : "";
-    return `<div class="card${d.off ? " off" : ""}" data-name="${esc(d.name)}"${switchable ? ' data-switch="1"' : ""} data-project="${esc(d.project ?? "")}" data-vis="${esc(d.visibility)}" data-kind="${esc(d.kind)}" data-search="${esc(search)}">
+    const confirm = manageable ? `<div class="confirm" hidden>Delete <strong>${esc(d.name)}</strong>? This removes the cloudfact and its link. Source files are kept.
+      <div><button class="mini danger" data-remove-yes>Delete permanently</button><button class="mini" data-remove-no>Cancel</button></div></div>` : "";
+    const editor = manageable ? `<div class="project-editor" hidden><label>Project <input list="projects" value="${esc(d.project ?? "")}" placeholder="No project" aria-label="Project for ${esc(d.name)}"><button class="mini" data-project-save>Move</button><button class="mini" data-project-cancel>Cancel</button></label><p>Choose a project, type a new name, or leave empty for no project.</p></div>` : "";
+    return `<div class="card${d.off ? " off" : ""}" data-name="${esc(d.name)}"${switchable ? ' data-switch="1"' : ""} data-project="${esc(d.project ?? "")}" data-vis="${esc(d.visibility)}" data-kind="${esc(d.kind)}" data-origin="${origin}" data-bytes="${bytes ?? ""}" data-search="${esc(search)}" data-modified="${esc(d.modifiedAt ?? "")}" role="row">
   <a class="open" href="${esc(open) || "#"}" target="_blank" rel="noopener">
   <div class="shot">${preview}</div>
   </a>
-  <div class="meta">
-    <p class="title"><a href="${esc(open) || "#"}" target="_blank" rel="noopener">${esc(d.name)}</a></p>
-    <div class="sub">
-      <span class="pill vis-${esc(d.visibility)}">${ICON[d.visibility]}${VIS_LABEL[d.visibility]}</span>
-      <span class="pill">${ICON[d.kind]}${KIND_LABEL[d.kind]}</span>
-      ${badge}
+  <div class="meta" role="presentation">
+    <p class="title" role="cell"><a href="${esc(open) || "#"}" target="_blank" rel="noopener" title="${esc(d.name)}">${esc(d.name)}</a>${badge}</p>
+    <span class="project-cell${d.project ? "" : " no-project"}" role="cell" title="${esc(d.project ?? "Sem projeto")}">${esc(d.project ?? "Sem projeto")}</span>
+    <div class="sub summary" role="presentation">
+      <span class="cell-size${bytes === null ? " unknown" : ""}" role="cell"${bytes === null ? ` title="${d.kind === "app" ? "Um app n\xE3o publica arquivos" : "Tamanho desconhecido"}"` : ""}>${formatBytes(bytes)}</span>
+      <span class="cell-origin" role="cell" title="${ORIGIN_TITLE[origin]}">${ORIGIN_ICON[origin]}${ORIGIN_LABEL[origin]}</span>
+      <span class="pill cell-vis vis-${esc(d.visibility)}" role="cell">${ICON[d.visibility]}${VIS_LABEL[d.visibility]}</span>
+      <span class="pill cell-kind" role="cell">${ICON[d.kind]}${KIND_LABEL[d.kind]}</span>
     </div>
-    <div class="sub when"><span class="pill state-off only-off">${ICON.off}Off</span><span data-at="${esc(d.modifiedAt ?? "")}">${d.modifiedAt ? "" : esc(d.status === "running" ? "Live now" : "No date")}</span></div>
+    <div class="sub when" role="cell"><span data-at="${esc(d.modifiedAt ?? "")}">${d.modifiedAt ? "" : esc(d.status === "running" ? "Live now" : "No date")}</span></div>
     ${actions}
     ${confirm}
+    ${editor}
+    ${opts.control ? '<p class="power-msg" hidden></p>' : ""}
     ${creds}
     ${d.visibility === "app-login" && !d.creds ? '<p class="hintline">Its own login. Record it with <code>cloudfact creds</code> to keep it here.</p>' : ""}
   </div>
 </div>`;
   };
-  const sections = c.projects.map(
-    (p) => `<section>
-  <h2>${esc(p.project ?? "No project")}</h2>
-  <div class="grid">${[...p.deploys].sort((a, b) => Number(a.off) - Number(b.off)).map(card).join("\n")}</div>
-</section>`
-  ).join("\n");
+  const entries = c.projects.flatMap((p) => p.deploys);
+  const options = (values) => values.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("");
+  const column = (key, label, filter) => `<div class="column-head" data-column="${key}" role="columnheader" aria-sort="${key === "modified" ? "descending" : "none"}">
+    <button data-sort="${key}" title="Ordenar por ${label}">${label}<span class="sort-direction" aria-hidden="true">${key === "modified" ? "\u2193" : ""}</span></button>
+    <button class="filter-button" data-filter-open="${key}" title="Filtrar por ${label}" aria-label="Filtrar por ${label}" aria-expanded="false" aria-pressed="false" aria-controls="filter-${key}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 4h18l-7 8v6l-4 2v-8z"/></svg></button>
+    <div class="column-filter-box" id="filter-${key}" hidden><label>Filtrar ${label}${filter}</label></div>
+  </div>`;
+  const head = `<div class="table-head" role="row">
+    ${column("name", "Cloudfact", '<input data-filter="name" type="search" aria-label="Filtrar Cloudfact" placeholder="Nome do cloudfact">')}
+    ${column("project", "Projeto", `<select data-filter="project" aria-label="Filtrar Projeto">${options([["*", "Todos"], ["", "Sem projeto"], ...projects.map((p) => [p, p])])}</select>`)}
+    ${column(
+    "size",
+    "Tamanho",
+    `<select data-filter="size" aria-label="Filtrar Tamanho">${options([
+      ["*", "Todos"],
+      ["small", "At\xE9 1 MB"],
+      ["medium", "1 a 10 MB"],
+      ["large", "Mais de 10 MB"],
+      ["none", "Sem tamanho"]
+    ])}</select>`
+  )}
+    ${column("origin", "Local", `<select data-filter="origin" aria-label="Filtrar Local">${options([["*", "Todos"], ...Object.entries(ORIGIN_LABEL)])}</select>`)}
+    ${column("visibility", "Acesso", `<select data-filter="visibility" aria-label="Filtrar Acesso">${options([["*", "Todos"], ...Object.entries(VIS_LABEL)])}</select>`)}
+    ${column("kind", "Tipo", `<select data-filter="kind" aria-label="Filtrar Tipo">${options([["*", "Todos"], ...Object.entries(KIND_LABEL)])}</select>`)}
+    ${column(
+    "modified",
+    "Atualizado",
+    `<select data-filter="modified" aria-label="Filtrar Atualizado">${options([
+      ["*", "Todas as datas"],
+      ["day", "\xDAltimas 24 horas"],
+      ["week", "\xDAltimos 7 dias"],
+      ["month", "\xDAltimos 30 dias"],
+      ["none", "Sem data"]
+    ])}</select>`
+  )}
+    <div class="column-head" id="column-actions" role="columnheader">A\xE7\xF5es</div>
+  </div>`;
+  const rows = [...entries].sort((a, b) => compareCloudfacts({ ...a, search: "" }, { ...b, search: "" }, "modified", true)).map(card).join("\n");
   return `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -2015,41 +2203,41 @@ function galleryHtml(c, opts = {}) {
 <link rel="icon" href="./favicon.png" sizes="any">
 <title>${esc(title)}</title>
 <style>${STYLE}</style>
-</head><body${opts.control ? ' data-control="1"' : ""}>
+</head><body class="list"${opts.control ? ' data-control="1"' : ""}>
 <header>
   <div class="brand">
     <img src="./symbol.png" alt="" width="26" height="26">
     <h1>${esc(title)}<span class="slogan">Your stuff, flexible, everywhere.</span></h1>
   </div>
   <div class="tools">
-    <input id="q" type="search" placeholder="Search" aria-label="Search deploys">
-    <button class="icon" id="view" aria-pressed="false" title="Toggle list view" aria-label="Toggle list view">
+    <input id="q" type="search" placeholder="Search" aria-label="Buscar cloudfacts">
+    <button class="icon" id="view" aria-pressed="true" title="Toggle list view" aria-label="Toggle list view">
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>
   </div>
 </header>
-<nav>
-  <button data-project="*" aria-pressed="true">All (${total})</button>
-  ${projects.map((p) => `<button data-project="${esc(p)}" aria-pressed="false">${esc(p)}</button>`).join("\n  ")}
-</nav>
-<main>
-${sections || '<p class="empty">Nothing published yet.</p>'}
-<p class="empty" id="empty" hidden>No deploy matches.</p>
+<datalist id="projects">${projects.map((p) => `<option value="${esc(p)}"></option>`).join("")}</datalist>
+<main role="table" aria-label="Cloudfacts">
+${head}
+<div class="grid" id="cloudfacts" role="rowgroup">${rows}</div>
+<p class="empty" id="empty"${total ? " hidden" : ""}>Nenhum cloudfact encontrado.</p>
 </main>
 <footer>${esc(c.accountName ?? c.accountId)}${c.subdomain ? ` \xB7 ${esc(c.subdomain)}.workers.dev` : ""} \xB7 generated by cloudfact</footer>
 <script>${SCRIPT}</script>
 </body></html>`;
 }
-var STYLE, ICON, VIS_LABEL, KIND_LABEL, SCRIPT, esc;
+var STYLE, ICON, ORIGIN_ICON, ORIGIN_LABEL, ORIGIN_TITLE, VIS_LABEL, KIND_LABEL, SCRIPT, esc, originOf2;
 var init_gallery = __esm({
   "src/services/gallery.ts"() {
     "use strict";
+    init_gallery_filters();
     STYLE = `
 @font-face{font-family:'CloudFacts Sans';src:url('./CloudFactsSans-Regular.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
 @font-face{font-family:'CloudFacts Sans';src:url('./CloudFactsSans-Medium.woff2') format('woff2');font-weight:500;font-style:normal;font-display:swap}
 /* CloudFacts Sans ships weights 400 and 500 only: anything heavier is faked by the browser */
 :root{--ink:#f4f4f1;--muted:#8e8e89;--surface:#141414;--line:#262626;--bg:#0d0d0d}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 'CloudFacts Sans',ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 header{display:flex;align-items:center;gap:14px;padding:18px 28px 14px;position:sticky;top:0;background:#0d0d0dee;backdrop-filter:blur(8px);z-index:5}
 h1{font-size:20px;font-weight:500;margin:0;letter-spacing:-.005em;display:flex;align-items:baseline;gap:10px}
@@ -2062,9 +2250,6 @@ input[type=search]{background:#1b1b1b;border:1px solid var(--line);color:var(--i
 input[type=search]:focus{outline:none;border-color:#4a4a4a}
 button.icon{background:none;border:1px solid transparent;color:#a1a1a1;border-radius:8px;padding:7px;cursor:pointer;line-height:0}
 button.icon:hover,button.icon[aria-pressed=true]{background:#1b1b1b;color:var(--ink);border-color:var(--line)}
-nav{display:flex;flex-wrap:wrap;gap:8px;padding:0 28px 16px}
-nav button{background:#161616;border:1px solid #2a2a2a;color:#b4b4b4;border-radius:999px;padding:5px 13px;font:inherit;font-size:13px;cursor:pointer}
-nav button[aria-pressed=true]{background:var(--ink);color:#111;border-color:var(--ink)}
 main{padding:4px 28px 56px}
 h2{font-size:12.5px;font-weight:500;text-transform:uppercase;letter-spacing:.07em;color:#8a8a8a;margin:28px 0 14px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:22px}
@@ -2077,7 +2262,9 @@ h2{font-size:12.5px;font-weight:500;text-transform:uppercase;letter-spacing:.07e
 .shot .mono{width:52px;height:52px;border-radius:13px;background:#232323;border:1px solid #303030;display:flex;align-items:center;justify-content:center;font-size:21px;font-weight:500;color:#c9c9c9;text-transform:uppercase}
 .shot .why{font-size:12px;letter-spacing:.02em}
 .meta{padding:13px 15px 15px}
-.title{font-weight:500;font-size:15px;margin:0 0 5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.title{display:flex;align-items:center;gap:8px;font-weight:500;font-size:15px;margin:0 0 5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.title a{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.title .tag{flex:none}
 .sub{display:flex;align-items:center;gap:7px;color:#8a8a8a;font-size:12.5px;flex-wrap:wrap}
 .sub.when{margin-top:7px}
 .pill{display:inline-flex;align-items:center;gap:5px;background:#1c1c1c;border:1px solid #2a2a2a;border-radius:6px;padding:2px 8px;font-size:11.5px;color:#b0b0b0}
@@ -2094,13 +2281,25 @@ h2{font-size:12.5px;font-weight:500;text-transform:uppercase;letter-spacing:.07e
 .mini:hover{background:#242424;color:var(--ink)}
 .mini:disabled{opacity:.6;cursor:default}
 /* the on/off switch: only on a catalog behind sign-in, only for what this page can actually switch */
-.actions .switch{margin-left:auto}
+.actions .switch{margin-left:4px}
+.action-link{border:0;background:none;padding:3px 0;color:#a8aaa8;font:inherit;font-size:11.5px;cursor:pointer;text-decoration:none}
+.action-link:hover{color:var(--ink);text-decoration:underline}
+.action-link:focus-visible,.project-button:focus-visible{outline:1px solid #8e8e89;outline-offset:3px}
+.project-button{border:0;background:none;color:#8e8e89;padding:3px;line-height:0;cursor:pointer}
+.project-button:hover{color:var(--ink)}
+.managed:disabled{opacity:.4;cursor:default}
+body:not([data-control="1"]) .managed{display:none}
+.toggle{width:34px;height:20px;flex:none;border:1px solid #343434;border-radius:999px;background:#232323;padding:2px;cursor:pointer;display:flex;align-items:center}
+.toggle::before{content:"";width:14px;height:14px;border-radius:50%;background:#a0a09b;transition:transform .15s,background .15s}
+.toggle[aria-checked="true"]{background:#284333;border-color:#3a5d48}
+.toggle[aria-checked="true"]::before{transform:translateX(14px);background:#e5ede7}
+.toggle:focus-visible{outline:1px solid #a6b5ac;outline-offset:3px}
+.toggle:disabled{opacity:.4;cursor:wait}
 .power{background:none;border:1px solid transparent;color:#6a6a6a;border-radius:999px;padding:2px;cursor:pointer;line-height:0}
 .power:hover,.power:focus-visible{color:#f07575;background:#221414;border-color:#432424;outline:none}
-.card:not(.off) .only-off,.card.off .only-on,.card[data-switch="0"] .switch,body:not([data-control="1"]) .switch{display:none}
+.card[data-switch="0"] .switch,body:not([data-control="1"]) .switch{display:none}
 .card.off .shot{filter:grayscale(1);opacity:.32}
 .card.off .title a{color:#8a8a8a}
-.pill.state-off{color:#e3a3a3;border-color:#3f2626;background:#1c1414}
 .confirm{margin-top:10px;padding:10px 11px;border:1px solid #3d2626;background:#1a1313;border-radius:9px;font-size:12px;line-height:1.45;color:#cdb9b9}
 .confirm[hidden],.power-msg[hidden]{display:none}
 .confirm div{display:flex;gap:7px;margin-top:9px}
@@ -2117,13 +2316,58 @@ h2{font-size:12.5px;font-weight:500;text-transform:uppercase;letter-spacing:.07e
 .creds code[data-copy]{cursor:copy}
 .creds code[data-copy]:hover{border-color:#3d3d3d;color:var(--ink)}
 .empty{color:#7a7a7a;padding:40px 0}
-body.list .grid{display:flex;flex-direction:column;gap:9px}
-body.list .shot{display:none}
-body.list .card{flex-direction:row;align-items:center;padding:11px 15px}
-body.list .meta{padding:0;display:flex;align-items:center;gap:14px;width:100%}
-body.list .title{margin:0;min-width:220px}
-body.list .actions{margin:0 0 0 auto}
-body.list .confirm{margin:0}
+/* names get room for the longest one first; whatever is left is shared evenly by the other columns */
+body.list main{display:grid;grid-template-columns:minmax(150px,max-content) repeat(6,minmax(max-content,1fr)) max-content;column-gap:clamp(8px,0.9vw,22px);overflow-x:auto}
+body.list .table-head,body.list .grid,body.list .card,body.list .meta{display:grid;grid-template-columns:subgrid;grid-column:1/-1}
+body.list main>.empty{grid-column:1/-1}
+body.list .grid{row-gap:9px;column-gap:normal}
+body.list .shot,body.list .card>.open{display:none}
+body.list .card{padding:11px 15px}
+body.list .meta{padding:0;align-items:center;row-gap:10px;min-width:0}
+body.list .project-cell{grid-column:2;grid-row:1;margin:0}
+body.list .title{grid-column:1;grid-row:1;margin:0;min-width:0}
+body.list .summary{display:contents}
+body.list .summary>*{grid-row:1;justify-self:start}
+body.list .summary>.cell-size{grid-column:3}
+body.list .summary>.cell-origin{grid-column:4}
+body.list .summary>.cell-vis{grid-column:5}
+body.list .summary>.cell-kind{grid-column:6}
+body.list .when{grid-column:7;grid-row:1;margin:0;white-space:nowrap}
+body.list .actions{grid-column:8;grid-row:1;display:grid;grid-template-columns:24px 24px 34px 24px 30px;gap:4px;align-items:center;justify-items:center;margin:0}
+body.list .actions>[data-project-edit]{grid-column:1;grid-row:1}
+body.list .actions>[data-copy]{grid-column:2;grid-row:1}
+body.list .actions>[data-power]{grid-column:3;grid-row:1;margin:0}
+body.list .actions>[data-remove]{grid-column:4;grid-row:1}
+body.list .actions>[data-creds]{grid-column:5;grid-row:1}
+body.list .confirm,body.list .project-editor,body.list .power-msg,body.list .creds,body.list .hintline{grid-column:1/-1;margin:0;min-width:0}
+.project-cell{display:block;max-width:128px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:4px 0 8px;color:#aaa;font-size:12.5px}
+.project-cell.no-project{color:#686868}
+.table-head{display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 10px;padding:0 16px;align-items:center}
+body.list .table-head{column-gap:normal;row-gap:0}
+.column-head{position:relative;min-width:0;display:flex;align-items:center;gap:3px;color:#8e8e89;font-size:12px}
+.column-head:nth-child(1){grid-column:1}.column-head:nth-child(2){grid-column:2}.column-head:nth-child(3){grid-column:3}.column-head:nth-child(4){grid-column:4}.column-head:nth-child(5){grid-column:5}.column-head:nth-child(6){grid-column:6}.column-head:nth-child(7){grid-column:7}.column-head:nth-child(8){grid-column:8}
+.column-head [data-sort]{border:0;background:none;padding:4px 0;color:inherit;font:inherit;cursor:pointer;text-align:left;display:flex;align-items:center;gap:4px}
+.column-head [data-sort]:hover,.column-head[aria-sort=ascending],.column-head[aria-sort=descending]{color:var(--ink)}
+.sort-direction{font-size:11px;min-width:9px}
+.sort-direction:empty{display:none}
+.filter-button{border:0;background:none;padding:4px;line-height:0;color:#686868;cursor:pointer;border-radius:4px}
+.filter-button:hover,.filter-button[aria-pressed=true],.filter-button[aria-expanded=true]{color:var(--ink);background:#262626}
+.column-head button:focus-visible{outline:1px solid #8e8e89;outline-offset:2px}
+.column-filter-box{position:absolute;top:100%;left:0;z-index:10;min-width:170px;padding:9px;background:#1b1b1b;border:1px solid #3a3a3a;border-radius:8px;box-shadow:0 8px 24px #0008}
+.column-head[data-column=modified] .column-filter-box{left:auto;right:0}
+/* the list's column header already says "Atualizado"; the cards have no header */
+body:not(.list) .when [data-at]:not([data-at=""])::before{content:'Edited '}
+.cell-size{font-variant-numeric:tabular-nums;color:#b0b0b0;font-size:12.5px;white-space:nowrap}
+.cell-size.unknown{color:#5f5f5f}
+.cell-origin{display:inline-flex;align-items:center;gap:5px;color:#aaa;font-size:12.5px;white-space:nowrap}
+.cell-origin svg{color:#777}
+.column-filter-box input,.column-filter-box select{box-sizing:border-box;width:100%;background:#141414;border:1px solid #363636;border-radius:5px;padding:6px;color:var(--ink);font:inherit;font-size:12px}
+.column-filter-box label{display:grid;gap:5px}
+body:not(.list) #column-actions{display:none}
+.project-editor{margin-top:10px;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;color:var(--muted)}
+.project-editor label{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.project-editor input{background:#1b1b1b;border:1px solid #363636;border-radius:6px;padding:6px 8px;color:var(--ink);font:inherit;min-width:0}
+@media(max-width:650px){header{padding:16px}.slogan{display:none}input[type=search]{width:130px}main{padding:4px 16px 32px}nav{padding:0 16px 16px}}
 footer{color:#5f5f5f;font-size:12px;padding:0 28px 32px}
 `;
     ICON = {
@@ -2133,12 +2377,26 @@ footer{color:#5f5f5f;font-size:12px;padding:0 28px 32px}
       static: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>',
       app: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>',
       "app-login": '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="8" cy="12" r="4"/><path d="M12 12h9M18 12v4M15 12v3"/></svg>',
-      off: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 3v8"/><path d="M6.3 7.2a8 8 0 1 0 11.4 0"/></svg>',
-      turnOff: '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.2l5.6 5.6M14.8 9.2l-5.6 5.6"/></svg>'
+      project: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M8 13h8m-3-3 3 3-3 3"/></svg>',
+      remove: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>',
+      copy: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg>'
+    };
+    ORIGIN_ICON = {
+      cloudflare: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 10a4 4 0 0 1 0 8z"/></svg>',
+      vm: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>',
+      ssh: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 8 4 4-4 4M12 16h7"/></svg>'
+    };
+    ORIGIN_LABEL = { cloudflare: "Cloudflare", vm: "VM", ssh: "SSH" };
+    ORIGIN_TITLE = {
+      cloudflare: "Arquivos hospedados direto na Cloudflare",
+      vm: "Servido por uma VM, atrav\xE9s de um t\xFAnel da Cloudflare",
+      ssh: "App em outra m\xE1quina, ligada \xE0 VM por SSH"
     };
     VIS_LABEL = { public: "Public", private: "Private link", access: "Sign-in", "app-login": "App login" };
     KIND_LABEL = { static: "Static", app: "Server app" };
     SCRIPT = `
+const matchesCloudfact = ${matchesCloudfact.toString()};
+const compareCloudfacts = ${compareCloudfacts.toString()};
 const fit = () => {
   for (const shot of document.querySelectorAll('.shot')) shot.style.setProperty('--s', (shot.clientWidth / 1280).toFixed(4));
 };
@@ -2147,21 +2405,32 @@ addEventListener('resize', fit);
 const rel = (iso, fallback) => {
   if (!iso) return fallback;
   const d = (Date.now() - Date.parse(iso)) / 1000;
-  if (d < 90) return 'Edited just now';
-  if (d < 3600) return 'Edited ' + Math.round(d / 60) + 'm ago';
-  if (d < 86400) return 'Edited ' + Math.round(d / 3600) + 'h ago';
-  if (d < 86400 * 7) return 'Edited ' + Math.round(d / 86400) + 'd ago';
-  return 'Edited ' + new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  if (d < 90) return 'just now';
+  if (d < 3600) return Math.round(d / 60) + 'm ago';
+  if (d < 86400) return Math.round(d / 3600) + 'h ago';
+  if (d < 86400 * 7) return Math.round(d / 86400) + 'd ago';
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 };
 for (const el of document.querySelectorAll('[data-at]')) el.textContent = rel(el.dataset.at, el.textContent);
-document.addEventListener('click', (e) => {
+document.addEventListener('click', async (e) => {
   const copy = e.target.closest('[data-copy]');
   if (copy) {
     e.preventDefault();
-    navigator.clipboard?.writeText(copy.dataset.copy);
-    const was = copy.textContent;
-    copy.textContent = 'Copied';
-    setTimeout(() => (copy.textContent = was), 1200);
+    if (copy.dataset.copying) return;
+    copy.dataset.copying = '1';
+    try { await navigator.clipboard.writeText(copy.dataset.copy); }
+    catch { copy.title = 'Could not copy'; delete copy.dataset.copying; return; }
+    const icon = copy.querySelector('svg');
+    if (icon) {
+      const was = copy.innerHTML;
+      copy.title = 'Copied';
+      copy.innerHTML = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>';
+      setTimeout(() => { copy.innerHTML = was; copy.title = 'Copy link'; delete copy.dataset.copying; }, 1200);
+    } else {
+      const was = copy.textContent;
+      copy.textContent = 'Copied';
+      setTimeout(() => { copy.textContent = was; delete copy.dataset.copying; }, 1200);
+    }
     return;
   }
   const show = e.target.closest('[data-creds]');
@@ -2169,119 +2438,168 @@ document.addEventListener('click', (e) => {
     e.preventDefault();
     const box = show.closest('.meta').querySelector('.creds');
     box.hidden = !box.hidden;
-    show.textContent = box.hidden ? 'Show login' : 'Hide login';
+    show.setAttribute('aria-expanded', String(!box.hidden));
   }
 });
-// on/off: the page asks its own Worker, which alone holds what it takes to switch each deploy
+// All mutations go through the signed-in catalog Worker; secrets stay server-side.
 const setOff = (card, off) => {
   card.classList.toggle('off', off);
   card.dataset.search = card.dataset.search.replace(/ off$/, '') + (off ? ' off' : '');
+  const toggle = card.querySelector('[data-power]');
+  if (toggle) {
+    toggle.setAttribute('aria-checked', String(!off));
+    toggle.title = off ? 'Turn on' : 'Turn off';
+    toggle.setAttribute('aria-label', (off ? 'Turn on ' : 'Turn off ') + card.dataset.name);
+  }
 };
 const say = (card, text) => {
   const msg = card.querySelector('.power-msg');
   msg.textContent = text;
   msg.hidden = !text;
 };
-const closeConfirms = (except) => {
-  for (const box of document.querySelectorAll('.confirm:not([hidden])')) if (box !== except) box.hidden = true;
+const closePanels = (except) => {
+  for (const box of document.querySelectorAll('.confirm,.project-editor')) if (box !== except) box.hidden = true;
+};
+const mutate = async (route, body) => {
+  const res = await fetch('/.cloudfact/' + route, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-cloudfact': '1' }, body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || data.error || 'HTTP ' + res.status);
+  return data;
+};
+const removeCard = (card) => {
+  card.remove();
+  apply();
 };
 document.addEventListener('click', async (e) => {
-  const ask = e.target.closest('[data-off]');
-  const yes = e.target.closest('[data-off-yes]');
-  const no = e.target.closest('[data-off-no]');
-  const on = e.target.closest('[data-on]');
-  if (!ask && !yes && !no && !on) return;
-  const card = e.target.closest('.card');
+  const button = e.target.closest('[data-power],[data-remove],[data-remove-yes],[data-remove-no],[data-project-edit],[data-project-save],[data-project-cancel]');
+  if (!button || button.disabled) return;
+  const card = button.closest('.card');
   const box = card.querySelector('.confirm');
+  const editor = card.querySelector('.project-editor');
   say(card, '');
-  if (ask) {
-    closeConfirms(box);
-    box.hidden = !box.hidden;
-    if (!box.hidden) box.querySelector('[data-off-yes]').focus();
+  if (button.hasAttribute('data-remove') || button.hasAttribute('data-project-edit')) {
+    const panel = button.hasAttribute('data-remove') ? box : editor;
+    closePanels(panel);
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) panel.querySelector('input,button').focus();
     return;
   }
-  if (no) {
-    box.hidden = true;
-    card.querySelector('[data-off]').focus();
+  if (button.hasAttribute('data-remove-no') || button.hasAttribute('data-project-cancel')) {
+    closePanels(null);
     return;
   }
-  const button = yes || on;
-  const label = button.textContent;
   button.disabled = true;
-  button.textContent = on ? 'Turning on\u2026' : 'Turning off\u2026';
+  const label = button.textContent;
+  button.setAttribute('aria-busy', 'true');
+  if (button.hasAttribute('data-remove-yes')) button.textContent = 'Deleting\u2026';
+  if (button.hasAttribute('data-project-save')) button.textContent = 'Moving\u2026';
   try {
-    const res = await fetch('/.cloudfact/power', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-cloudfact': '1' },
-      body: JSON.stringify({ name: card.dataset.name, on: Boolean(on) }),
-    });
-    let data = {};
-    try { data = await res.json(); } catch {}
-    if (!res.ok) throw new Error(data.message || 'the switch answered HTTP ' + res.status);
-    setOff(card, data.on === false);
-    box.hidden = true;
-    card.querySelector(data.on === false ? '[data-on]' : '[data-off]').focus();
-  } catch (err) {
-    say(card, 'Could not turn it ' + (on ? 'on' : 'off') + ': ' + err.message);
-  } finally {
-    button.disabled = false;
-    button.textContent = label;
-  }
+    if (button.hasAttribute('data-power')) {
+      const data = await mutate('power', { name: card.dataset.name, on: card.classList.contains('off') });
+      setOff(card, data.on === false);
+      apply();
+    } else if (button.hasAttribute('data-remove-yes')) {
+      const data = await mutate('remove', { name: card.dataset.name, confirm: card.dataset.name });
+      if (!data.removed) throw new Error('Deletion was not confirmed.');
+      removeCard(card);
+      if (data.warning) alert(data.warning);
+    } else {
+      const data = await mutate('project', { name: card.dataset.name, project: editor.querySelector('input').value.trim() || null });
+      if (data.warning) { say(card, data.warning); return; }
+      location.reload();
+    }
+  } catch (err) { say(card, err.message); }
+  finally { button.disabled = false; button.removeAttribute('aria-busy'); button.textContent = label; }
 });
-addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeConfirms(null);
-});
-// the page is a snapshot: ask for the live position of every switch
+addEventListener('keydown', (e) => { if (e.key === 'Escape') { closePanels(null); closeColumnFilters(null); } });
 if (document.body.dataset.control === '1')
   fetch('/.cloudfact/state', { headers: { 'x-cloudfact': '1' } })
     .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
     .then(({ deploys }) => {
-      for (const card of document.querySelectorAll('.card[data-switch]')) {
+      for (const card of document.querySelectorAll('.card')) {
         const st = deploys[card.dataset.name];
         if (!st) continue;
-        if (st.error) card.dataset.switch = '0'; // not reachable from here right now: nothing to offer
+        if (st.removed) { removeCard(card); continue; }
+        if (st.error) card.dataset.switch = '0';
         else setOff(card, !st.on);
       }
-    })
-    .catch(() => (document.body.dataset.control = '0'));
+    }).catch(() => {});
 const search = document.getElementById('q');
-const apply = () => {
-  const q = search.value.trim().toLowerCase();
-  const project = document.querySelector('nav button[aria-pressed=true]').dataset.project;
-  for (const section of document.querySelectorAll('section')) {
-    let shown = 0;
-    for (const card of section.querySelectorAll('.card')) {
-      const okQ = !q || card.dataset.search.includes(q);
-      const okP = project === '*' || card.dataset.project === project;
-      card.hidden = !(okQ && okP);
-      if (!card.hidden) shown++;
+const container = document.getElementById('cloudfacts');
+const filterFields = Object.fromEntries([...document.querySelectorAll('[data-filter]')].map((el) => [el.dataset.filter, el]));
+let sortKey = 'modified', descending = true;
+const rowData = (card) => ({
+  name: card.dataset.name, project: card.dataset.project || null, visibility: card.dataset.vis, kind: card.dataset.kind,
+  modifiedAt: card.dataset.modified || null, search: card.dataset.search,
+  bytes: card.dataset.bytes ? Number(card.dataset.bytes) : null,
+  origin: card.dataset.origin,
+  originLabel: card.querySelector('.cell-origin').textContent,
+  visibilityLabel: card.querySelector('.cell-vis').textContent,
+  kindLabel: card.querySelector('.cell-kind').textContent,
+});
+const closeColumnFilters = (except) => {
+  for (const box of document.querySelectorAll('.column-filter-box')) {
+    if (box !== except) {
+      box.hidden = true;
+      box.parentElement.querySelector('[data-filter-open]').setAttribute('aria-expanded', 'false');
     }
-    section.hidden = shown === 0;
   }
-  document.getElementById('empty').hidden = document.querySelectorAll('.card:not([hidden])').length > 0;
+};
+const apply = () => {
+  const filters = Object.fromEntries(Object.entries(filterFields).map(([key, el]) => [key, el.value]));
+  filters.query = search.value;
+  const rows = [...container.querySelectorAll('.card')].map((card) => ({ card, row: rowData(card) }));
+  for (const { card, row } of rows) card.hidden = !matchesCloudfact(row, filters);
+  if (sortKey) rows.sort((a, b) => compareCloudfacts(a.row, b.row, sortKey, descending));
+  rows.forEach(({ card }, i) => { if (container.children[i] !== card) container.insertBefore(card, container.children[i] || null); });
+  document.getElementById('empty').hidden = rows.some(({ card }) => !card.hidden);
+  for (const el of Object.values(filterFields)) {
+    const active = el.value !== (el.tagName === 'INPUT' ? '' : '*');
+    el.closest('.column-head').querySelector('[data-filter-open]').setAttribute('aria-pressed', String(active));
+  }
 };
 search.addEventListener('input', apply);
-for (const b of document.querySelectorAll('nav button'))
-  b.addEventListener('click', () => {
-    for (const o of document.querySelectorAll('nav button')) o.setAttribute('aria-pressed', String(o === b));
-    apply();
-  });
+for (const field of Object.values(filterFields)) field.addEventListener(field.tagName === 'INPUT' ? 'input' : 'change', apply);
+for (const button of document.querySelectorAll('[data-sort]')) button.addEventListener('click', () => {
+  const key = button.dataset.sort;
+  descending = key === sortKey ? !descending : key === 'modified' || key === 'size';
+  sortKey = key;
+  for (const head of document.querySelectorAll('.column-head[data-column]')) {
+    const active = head.dataset.column === key;
+    head.setAttribute('aria-sort', active ? (descending ? 'descending' : 'ascending') : 'none');
+    head.querySelector('.sort-direction').textContent = active ? (descending ? '\u2193' : '\u2191') : '';
+  }
+  closeColumnFilters(null);
+  apply();
+});
+for (const button of document.querySelectorAll('[data-filter-open]')) button.addEventListener('click', () => {
+  const box = button.parentElement.querySelector('.column-filter-box');
+  closeColumnFilters(box);
+  box.hidden = !box.hidden;
+  button.setAttribute('aria-expanded', String(!box.hidden));
+  if (!box.hidden) box.querySelector('input,select').focus();
+});
+document.addEventListener('click', (e) => { if (!e.target.closest('.column-head')) closeColumnFilters(null); });
 const view = document.getElementById('view');
 view.addEventListener('click', () => {
   const list = document.body.classList.toggle('list');
   view.setAttribute('aria-pressed', String(list));
-  try { localStorage.setItem('cloudfact-view', list ? 'list' : 'grid'); } catch {}
+  try { localStorage.setItem('cloudfact-view-v2', list ? 'list' : 'grid'); } catch {}
+  fit();
 });
-try { if (localStorage.getItem('cloudfact-view') === 'list') view.click(); } catch {}
+try { if (localStorage.getItem('cloudfact-view-v2') === 'grid') view.click(); } catch {}
 fit();
 `;
     esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    originOf2 = (d) => d.origin ?? (d.backend === "tunnel" ? "vm" : "cloudflare");
   }
 });
 
 // src/services/snapshot.ts
 import fs7 from "fs";
-import path6 from "path";
+import path7 from "path";
 async function get(url, headers = {}) {
   try {
     const res = await fetch(url, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT), redirect: "follow" });
@@ -2293,15 +2611,15 @@ async function get(url, headers = {}) {
   }
 }
 function fromDisk(root, file) {
-  const entry = file ?? path6.join(root, "index.html");
+  const entry = file ?? path7.join(root, "index.html");
   try {
     const html = fs7.readFileSync(entry, "utf8").slice(0, MAX_HTML);
-    const base = file ? path6.dirname(file) : root;
+    const base = file ? path7.dirname(file) : root;
     return {
       html,
       resolve: async (rel) => {
-        const target = path6.resolve(base, rel);
-        if (!target.startsWith(path6.resolve(base))) return null;
+        const target = path7.resolve(base, rel);
+        if (!target.startsWith(path7.resolve(base))) return null;
         try {
           return fs7.readFileSync(target, "utf8").slice(0, MAX_CSS);
         } catch {
@@ -2333,7 +2651,7 @@ async function inlineStyles(html, resolve) {
 async function snapshot(state, entry) {
   let html = null;
   let resolve = async () => null;
-  const disk = state?.root || state?.file ? fromDisk(state.root ?? path6.dirname(state.file), state.file ?? null) : null;
+  const disk = state?.root || state?.file ? fromDisk(state.root ?? path7.dirname(state.file), state.file ?? null) : null;
   if (disk) {
     html = disk.html;
     resolve = disk.resolve;
@@ -2380,10 +2698,185 @@ var init_snapshot = __esm({
   }
 });
 
-// src/services/codex.ts
+// src/services/catalog-manager.ts
+var catalog_manager_exports = {};
+__export(catalog_manager_exports, {
+  createCatalogManagerHandler: () => createCatalogManagerHandler,
+  ensureCatalogManager: () => ensureCatalogManager,
+  runCatalogManager: () => runCatalogManager
+});
+import crypto4 from "crypto";
 import fs8 from "fs";
+import http from "http";
+import path8 from "path";
+import { spawn as spawn2 } from "child_process";
+async function ensureCatalogManager() {
+  let state = load();
+  let healthy = false;
+  if (state && alive(state.pid)) {
+    try {
+      healthy = (await fetch(`http://127.0.0.1:${state.port}/health`, {
+        headers: { authorization: `Bearer ${state.key}` },
+        signal: AbortSignal.timeout(1500)
+      })).ok;
+    } catch {
+    }
+  }
+  if (!healthy) {
+    const fd = fs8.openSync(path8.join(HOME, "catalog-manager.log"), "a", 384);
+    try {
+      const child = spawn2(process.execPath, [BIN_SCRIPT, "_catalog-manager"], {
+        detached: true,
+        stdio: ["ignore", fd, fd],
+        env: { ...process.env, CLOUDFACT_HOME: HOME }
+      });
+      child.on("error", (err) => console.error("catalog manager:", err.message));
+      child.unref();
+      const deadline = Date.now() + 1e4;
+      do {
+        await pause(100);
+        state = load();
+        if (state && state.pid === child.pid && alive(state.pid)) break;
+      } while (Date.now() < deadline);
+      if (!state || state.pid !== child.pid) throw new Error("catalog manager did not start; see catalog-manager.log");
+    } finally {
+      fs8.closeSync(fd);
+    }
+  }
+  const manager = state;
+  const tunnel = await deployTunnel({
+    name: SERVICE,
+    internal: true,
+    mode: "proxy",
+    root: null,
+    file: null,
+    targetPort: manager.port,
+    private: true,
+    restart: false,
+    timeoutMs: 45e3
+  });
+  const local = readState(SERVICE);
+  if (!tunnel.url || !local.key) throw new Error("catalog management tunnel is not ready");
+  return { url: tunnel.url, key: manager.key, cookieKey: local.key };
+}
+function createCatalogManagerHandler(key, actions) {
+  let pending = Promise.resolve();
+  return async (req, res) => {
+    const send = (status2, body) => {
+      res.writeHead(status2, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify(body));
+    };
+    if (!timingEqual(req.headers.authorization ?? "", `Bearer ${key}`)) return send(401, { error: "unauthorized" });
+    const route = new URL(req.url ?? "/", "http://localhost").pathname;
+    if (req.method === "GET" && route === "/health") return send(200, { ok: true });
+    try {
+      if (req.method === "GET" && route === "/state") return send(200, { names: await actions.names() });
+      if (req.method !== "POST" || !["/remove", "/project"].includes(route)) return send(404, { error: "not_found" });
+      let text = "";
+      for await (const chunk of req) {
+        text += String(chunk);
+        if (text.length > 4096) return send(413, { error: "too_large" });
+      }
+      let body;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        return send(400, { error: "bad_request" });
+      }
+      const name = body?.name;
+      if (typeof name !== "string" || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) return send(400, { error: "bad_request" });
+      if (route === "/remove" && body.confirm !== name) return send(400, { error: "confirmation_required" });
+      if (route === "/project" && body.project !== null && typeof body.project !== "string") return send(400, { error: "bad_request" });
+      const project = typeof body.project === "string" && body.project.trim() ? slugProject(body.project) : null;
+      const work = pending.then(async () => {
+        if (!(await actions.names()).includes(name)) {
+          send(404, { error: "unknown" });
+          return;
+        }
+        if (route === "/remove") await actions.remove(name);
+        else await actions.project(name, project);
+        let warning;
+        try {
+          await actions.refresh();
+        } catch {
+          warning = "The change was saved, but the catalog could not be republished. Refresh it with cloudfact catalog --publish.";
+        }
+        send(200, { name, ...route === "/remove" ? { removed: true } : { project }, ...warning ? { warning } : {} });
+      });
+      pending = work.catch(() => {
+      });
+      await work;
+    } catch (err) {
+      send(502, { error: "failed", message: err.message });
+    }
+  };
+}
+async function runCatalogManager() {
+  process.env.CLOUDFACT_NO_CATALOG_REFRESH = "1";
+  const key = crypto4.randomBytes(32).toString("base64url");
+  const entries = async () => (await catalog({ scanLocal: false })).projects.flatMap((p) => p.deploys).filter((d) => !d.untracked && d.name !== readConfig().catalogDeploy);
+  const handler = createCatalogManagerHandler(key, {
+    names: async () => (await entries()).map((d) => d.name),
+    remove: async (name) => {
+      if (readState(name)) await remove(name);
+      else {
+        await deleteWorker(name);
+        removeDeployDir(name);
+      }
+    },
+    project: async (name, project) => {
+      const entry = (await entries()).find((d) => d.name === name);
+      if (entry.inAccount) await setProject(name, project);
+      if (readState(name)) patchState(name, { project });
+    },
+    refresh: async () => {
+      await new Promise((resolve, reject) => {
+        const child = spawn2(process.execPath, [BIN_SCRIPT, "catalog", "--publish", "--json"], {
+          stdio: ["ignore", "ignore", "inherit"],
+          env: { ...process.env, CLOUDFACT_HOME: HOME, CLOUDFACT_NO_CATALOG_REFRESH: "1" }
+        });
+        child.once("error", reject);
+        child.once("exit", (code) => code === 0 ? resolve() : reject(new Error("catalog publication failed")));
+      });
+    }
+  });
+  const server = http.createServer(handler);
+  server.requestTimeout = 12e4;
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  fs8.writeFileSync(FILE, JSON.stringify({ pid: process.pid, port: address.port, key }), { mode: 384 });
+}
+var SERVICE, FILE, load, pause;
+var init_catalog_manager = __esm({
+  "src/services/catalog-manager.ts"() {
+    "use strict";
+    init_config();
+    init_tunnel();
+    init_gate();
+    init_workers();
+    init_catalog();
+    init_state();
+    init_cloudfact();
+    SERVICE = "cloudfact-internal-manager";
+    FILE = path8.join(HOME, "catalog-manager.json");
+    load = () => {
+      try {
+        return JSON.parse(fs8.readFileSync(FILE, "utf8"));
+      } catch {
+        return null;
+      }
+    };
+    pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  }
+});
+
+// src/services/codex.ts
+import fs9 from "fs";
 import os3 from "os";
-import path7 from "path";
+import path9 from "path";
 import { spawnSync as spawnSync3 } from "child_process";
 function skillForCodex(markdown) {
   const m = /^---\n([\s\S]*?)\n---\n/.exec(markdown);
@@ -2398,14 +2891,14 @@ ${kept}
 ` + markdown.slice(m[0].length);
 }
 function copySkill(target) {
-  fs8.rmSync(target, { recursive: true, force: true });
-  fs8.mkdirSync(target, { recursive: true });
+  fs9.rmSync(target, { recursive: true, force: true });
+  fs9.mkdirSync(target, { recursive: true });
   let n = 0;
-  for (const entry of fs8.readdirSync(SKILL_DIR, { withFileTypes: true })) {
+  for (const entry of fs9.readdirSync(SKILL_DIR, { withFileTypes: true })) {
     if (!entry.isFile()) continue;
-    const from = path7.join(SKILL_DIR, entry.name);
-    const body = fs8.readFileSync(from, "utf8");
-    fs8.writeFileSync(path7.join(target, entry.name), entry.name === "SKILL.md" ? skillForCodex(body) : body);
+    const from = path9.join(SKILL_DIR, entry.name);
+    const body = fs9.readFileSync(from, "utf8");
+    fs9.writeFileSync(path9.join(target, entry.name), entry.name === "SKILL.md" ? skillForCodex(body) : body);
     n += 1;
   }
   return n;
@@ -2425,9 +2918,9 @@ args = [${args.map((a) => JSON.stringify(a)).join(", ")}]
 }
 function setupCodex() {
   const home = codexHome();
-  fs8.mkdirSync(home, { recursive: true });
-  const skillPath = path7.join(home, "skills", "cloudfact");
-  fs8.mkdirSync(path7.dirname(skillPath), { recursive: true });
+  fs9.mkdirSync(home, { recursive: true });
+  const skillPath = path9.join(home, "skills", "cloudfact");
+  fs9.mkdirSync(path9.dirname(skillPath), { recursive: true });
   const files = copySkill(skillPath);
   const win = process.platform === "win32";
   const run = (args) => spawnSync3("codex", args, { encoding: "utf8", shell: win, stdio: "ignore" });
@@ -2436,10 +2929,10 @@ function setupCodex() {
     run(["mcp", "remove", "cloudfact"]);
     if (run(["mcp", "add", "cloudfact", "--", process.execPath, SERVER_SCRIPT]).status === 0) registeredWith = "codex-cli";
   }
-  const configPath = path7.join(home, "config.toml");
+  const configPath = path9.join(home, "config.toml");
   if (registeredWith === "config.toml") {
-    const current = fs8.existsSync(configPath) ? fs8.readFileSync(configPath, "utf8") : "";
-    fs8.writeFileSync(configPath, mergeMcpToml(current, process.execPath, [SERVER_SCRIPT]));
+    const current = fs9.existsSync(configPath) ? fs9.readFileSync(configPath, "utf8") : "";
+    fs9.writeFileSync(configPath, mergeMcpToml(current, process.execPath, [SERVER_SCRIPT]));
   }
   return { codexHome: home, configPath, skillPath, files, registeredWith };
 }
@@ -2448,15 +2941,15 @@ var init_codex = __esm({
   "src/services/codex.ts"() {
     "use strict";
     init_config();
-    codexHome = () => process.env.CODEX_HOME ?? path7.join(os3.homedir(), ".codex");
+    codexHome = () => process.env.CODEX_HOME ?? path9.join(os3.homedir(), ".codex");
     ALLOWED_FRONTMATTER = /* @__PURE__ */ new Set(["name", "description", "license", "allowed-tools", "metadata"]);
   }
 });
 
 // src/services/auth.ts
-import path8 from "path";
+import path10 from "path";
 import readline from "readline/promises";
-import { spawn as spawn2 } from "child_process";
+import { spawn as spawn3 } from "child_process";
 async function api2(pathname, token) {
   const res = await fetch(API3 + pathname, { headers: { Authorization: `Bearer ${token}` } });
   let body;
@@ -2523,12 +3016,12 @@ ${menu}`);
     cloudflareAccountName: account?.name ?? null,
     loggedInAt: (/* @__PURE__ */ new Date()).toISOString()
   });
-  return { ok: true, source: "token", accountId, accountName: account?.name ?? null, config: path8.join(HOME, "config.json") };
+  return { ok: true, source: "token", accountId, accountName: account?.name ?? null, config: path10.join(HOME, "config.json") };
 }
 async function loginWithDevice(opts = {}) {
   const onPrompt = opts.onPrompt ?? ((t) => process.stderr.write(t));
   const [cmd, ...base] = wranglerCommand();
-  const child = spawn2(cmd, [...base, "login", "--device", "--browser=false"], {
+  const child = spawn3(cmd, [...base, "login", "--device", "--browser=false"], {
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, CI: "1" }
   });
@@ -2561,7 +3054,7 @@ async function loginWithDevice(opts = {}) {
 ${out.trim().split("\n").slice(-6).join("\n")}`);
   }
   writeConfig({ ...readConfig(), cloudflareAuth: "wrangler", loggedInAt: (/* @__PURE__ */ new Date()).toISOString() });
-  return { ok: true, source: "wrangler", config: path8.join(HOME, "config.json") };
+  return { ok: true, source: "wrangler", config: path10.join(HOME, "config.json") };
 }
 function logout() {
   const { cloudflareApiToken, cloudflareAccountId: _a, cloudflareAccountName: _n, cloudflareAuth, loggedInAt: _l, ...rest } = readConfig();
@@ -2583,19 +3076,19 @@ var init_auth = __esm({
 });
 
 // src/cloudfact.ts
-import fs9 from "fs";
-import path9 from "path";
-import { spawn as spawn3, spawnSync as spawnSync4 } from "child_process";
+import fs10 from "fs";
+import path11 from "path";
+import { spawn as spawn4, spawnSync as spawnSync4 } from "child_process";
 function resolveTarget(target) {
-  const abs = path9.resolve(target ?? ".");
+  const abs = path11.resolve(target ?? ".");
   let stat;
   try {
-    stat = fs9.statSync(abs);
+    stat = fs10.statSync(abs);
   } catch {
     throw new Error(`path does not exist: ${abs}`);
   }
-  if (stat.isDirectory()) return { mode: "dir", root: abs, file: null, defaultName: path9.basename(abs) };
-  return { mode: "file", root: null, file: abs, defaultName: path9.basename(abs, path9.extname(abs)) };
+  if (stat.isDirectory()) return { mode: "dir", root: abs, file: null, defaultName: path11.basename(abs) };
+  return { mode: "file", root: null, file: abs, defaultName: path11.basename(abs, path11.extname(abs)) };
 }
 function resolveBackend(choice) {
   const c = choice ?? "auto";
@@ -2710,7 +3203,7 @@ async function refreshCatalogPage(justDeployed) {
   }
   if (!name || name === justDeployed) return false;
   try {
-    const child = spawn3(process.execPath, [BIN_SCRIPT, "catalog", "--publish", "--name", name, "--json"], {
+    const child = spawn4(process.execPath, [BIN_SCRIPT, "catalog", "--publish", "--name", name, "--json"], {
       detached: true,
       stdio: "ignore",
       env: { ...process.env, CLOUDFACT_NO_CATALOG_REFRESH: "1" }
@@ -2726,18 +3219,25 @@ async function publishCatalog(opts = {}) {
   const access = opts.access ?? (opts.public ? void 0 : await accountEmail() ?? void 0);
   const states = new Map(listDeploys().map((s) => [s.name, s]));
   const name = slug(opts.name ?? readConfig().catalogDeploy ?? "cloudfacts");
+  c.projects = c.projects.map((p) => ({ ...p, deploys: p.deploys.filter((d) => d.name !== name) })).filter((p) => p.deploys.length > 0);
   withLocalSecrets(c, states, Boolean(access));
   const token = credentials()?.token;
   const control = access && token ? { accountId: c.accountId, token, targets: withControl(c, states, name) } : null;
+  const manage = opts.manage ?? readConfig().catalogManage ?? false;
+  if (control && manage) {
+    const names = c.projects.flatMap((p) => p.deploys).filter((d) => !d.untracked).map((d) => d.name);
+    control.targets.manager = { ...await ensureCatalogManager(), names };
+    for (const d of c.projects.flatMap((p) => p.deploys)) d.removable = names.includes(d.name);
+  }
   const shots = await snapshots(
     c.projects.flatMap((p) => p.deploys).map((d) => ({ name: d.name, url: d.url, visibility: d.visibility })),
     states
   );
-  const dir = path9.join(HOME, "catalog");
-  fs9.mkdirSync(dir, { recursive: true, mode: 448 });
-  for (const file of fs9.existsSync(BRAND_DIR) ? fs9.readdirSync(BRAND_DIR) : [])
-    fs9.copyFileSync(path9.join(BRAND_DIR, file), path9.join(dir, file));
-  fs9.writeFileSync(path9.join(dir, "index.html"), galleryHtml(c, { title: opts.title, snapshots: shots, control: Boolean(control) }));
+  const dir = path11.join(HOME, "catalog");
+  fs10.mkdirSync(dir, { recursive: true, mode: 448 });
+  for (const file of fs10.existsSync(BRAND_DIR) ? fs10.readdirSync(BRAND_DIR) : [])
+    fs10.copyFileSync(path11.join(BRAND_DIR, file), path11.join(dir, file));
+  fs10.writeFileSync(path11.join(dir, "index.html"), galleryHtml(c, { title: opts.title, snapshots: shots, control: Boolean(control) }));
   const priv = !opts.public;
   const result = await deployWorkers({
     name,
@@ -2751,12 +3251,13 @@ async function publishCatalog(opts = {}) {
     project: opts.project ?? "cloudfact",
     control
   });
-  writeConfig({ ...readConfig(), catalogDeploy: result.name });
+  writeConfig({ ...readConfig(), catalogDeploy: result.name, catalogManage: manage });
   await tagWorker(result.name, {
     project: opts.project ?? "cloudfact",
     visibility: result.access ? "access" : result.privateUrl ? "private" : "public",
     kind: "static",
-    catalog: true
+    catalog: true,
+    bytes: result.bytes ?? null
   }).catch(() => {
   });
   return result;
@@ -2787,10 +3288,10 @@ function setMailKey(key, names = []) {
       continue;
     }
     const dir = deployDir(name);
-    const workerDir = path9.join(dir, "worker");
+    const workerDir = path11.join(dir, "worker");
     const r = putSecret(name, "RESEND_API_KEY", key, {
-      cwd: fs9.existsSync(workerDir) ? workerDir : dir,
-      logFile: path9.join(dir, "wrangler.log")
+      cwd: fs10.existsSync(workerDir) ? workerDir : dir,
+      logFile: path11.join(dir, "wrangler.log")
     });
     if (r.status === 0) out.set.push(name);
     else out.failed.push({ name, error: `wrangler secret put failed: ${r.text.slice(-300)}` });
@@ -2855,7 +3356,7 @@ async function remove(name) {
   if (!s) throw new Error(`deploy "${name}" does not exist`);
   let remote;
   if (s.backend === "tunnel") await stopTunnel(name);
-  if (s.backend === "workers" && s.status === "deployed") remote = await deleteWorker(name);
+  if (s.backend === "workers" || s.access || s.url?.includes(".workers.dev")) remote = await deleteWorker(name);
   removeDeployDir(name);
   await refreshCatalogPage(name);
   return { name, removed: true, remote };
@@ -2903,6 +3404,7 @@ var init_cloudfact = __esm({
     init_catalog();
     init_gallery();
     init_snapshot();
+    init_catalog_manager();
     init_workers();
     init_cloudflared();
     init_state();
@@ -3118,10 +3620,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path10) {
-  if (!path10)
+function getElementAtPath(obj, path12) {
+  if (!path12)
     return obj;
-  return path10.reduce((acc, key) => acc?.[key], obj);
+  return path12.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -3370,11 +3872,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path10, issues) {
+function prefixIssues(path12, issues) {
   return issues.map((iss) => {
     var _a;
     (_a = iss).path ?? (_a.path = []);
-    iss.path.unshift(path10);
+    iss.path.unshift(path12);
     return iss;
   });
 }
@@ -9718,8 +10220,8 @@ var init_parseUtil = __esm({
     init_errors3();
     init_en2();
     makeIssue = (params) => {
-      const { data, path: path10, errorMaps, issueData } = params;
-      const fullPath = [...path10, ...issueData.path || []];
+      const { data, path: path12, errorMaps, issueData } = params;
+      const fullPath = [...path12, ...issueData.path || []];
       const fullIssue = {
         ...issueData,
         path: fullPath
@@ -10030,11 +10532,11 @@ var init_types2 = __esm({
     init_parseUtil();
     init_util2();
     ParseInputLazyPath = class {
-      constructor(parent, value, path10, key) {
+      constructor(parent, value, path12, key) {
         this._cachedPath = [];
         this.parent = parent;
         this.data = value;
-        this._path = path10;
+        this._path = path12;
         this._key = key;
       }
       get path() {
@@ -13615,11 +14117,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path10) {
-  if (path10.length === 0) {
+function getDotPath(path12) {
+  if (path12.length === 0) {
     return "object root";
   }
-  return path10.reduce((acc, seg, index) => {
+  return path12.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -19563,8 +20065,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path10) {
-      let input = path10;
+    function removeDotSegments(path12) {
+      let input = path12;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -19973,8 +20475,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path10 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path10 && path10 !== "/" ? path10 : void 0;
+        const path12 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path12 && path12 !== "/" ? path12 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -20033,7 +20535,7 @@ var require_schemes = __commonJS({
       urnComponent.nss = (uuidComponent.uuid || "").toLowerCase();
       return urnComponent;
     }
-    var http = (
+    var http2 = (
       /** @type {SchemeHandler} */
       {
         scheme: "http",
@@ -20046,7 +20548,7 @@ var require_schemes = __commonJS({
       /** @type {SchemeHandler} */
       {
         scheme: "https",
-        domainHost: http.domainHost,
+        domainHost: http2.domainHost,
         parse: httpParse,
         serialize: httpSerialize
       }
@@ -20090,7 +20592,7 @@ var require_schemes = __commonJS({
     var SCHEMES = (
       /** @type {Record<SchemeName, SchemeHandler>} */
       {
-        http,
+        http: http2,
         https,
         ws,
         wss,
@@ -23486,12 +23988,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs10, exportName) {
+    function addFormats(ajv, list, fs11, exportName) {
       var _a;
       var _b;
       (_a = (_b = ajv.opts.code).formats) !== null && _a !== void 0 ? _a : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs10[f]);
+        ajv.addFormat(f, fs11[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -25397,13 +25899,13 @@ function createServer() {
       description: "Publish a path from this machine and return the URL",
       argsSchema: { path: external_exports.string().describe("folder or .html file") }
     },
-    ({ path: path10 }) => ({
+    ({ path: path12 }) => ({
       messages: [
         {
           role: "user",
           content: {
             type: "text",
-            text: `Publish ${path10} with the cloudfact deploy tool and give me the public URL. If it fails, run doctor and logs and explain.`
+            text: `Publish ${path12} with the cloudfact deploy tool and give me the public URL. If it fails, run doctor and logs and explain.`
           }
         }
       ]
@@ -25443,7 +25945,7 @@ usage:
   cloudfact expose <port> [--name n] [--public] [--access a@x.com,b@y.com] [--expires 24h] [--project p] [--ssh user@host] [--ssh-port 22] [--identity key] [--strict-host-key] [--restart] [--json]
   cloudfact rotate <name> [--expires 24h]
   cloudfact list [--json]
-  cloudfact catalog [--project p] [--publish] [--access a@x.com] [--json]
+  cloudfact catalog [--project p] [--publish] [--manage] [--access a@x.com] [--json]
                                                  (every cloudfact in the Cloudflare account, grouped by project;
                                                   --publish turns the catalog itself into a page)
   cloudfact project <name> <project|->            (file a deploy under a project; "-" clears it)
@@ -25499,7 +26001,8 @@ async function main(argv) {
       password: { type: "string" },
       note: { type: "string" },
       clear: { type: "boolean" },
-      codex: { type: "boolean" }
+      codex: { type: "boolean" },
+      manage: { type: "boolean" }
     }
   });
   const [cmd, ...rest] = positionals;
@@ -25515,6 +26018,11 @@ ${HELP}`);
     return 0;
   }
   switch (cmd) {
+    case "_catalog-manager": {
+      const { runCatalogManager: runCatalogManager2 } = await Promise.resolve().then(() => (init_catalog_manager(), catalog_manager_exports));
+      await runCatalogManager2();
+      return 0;
+    }
     case "deploy": {
       const r = await deploy({
         path: rest[0],
@@ -25570,6 +26078,7 @@ ${HELP}`);
     case "catalog": {
       if (values.publish) {
         const r = await publishCatalog({
+          manage: values.manage,
           name: values.name,
           project: values.project,
           access: values.access ? values.access.split(",") : void 0,

@@ -9,6 +9,7 @@ import { expiryFrom } from './services/duration.js';
 import { accountEmail, bearer, catalog as readCatalog, publishedCatalogName, switchWorker, tagWorker } from './services/catalog.js';
 import { galleryHtml } from './services/gallery.js';
 import { snapshots } from './services/snapshot.js';
+import { ensureCatalogManager } from './services/catalog-manager.js';
 import { deleteWorker, deployWorkers } from './backends/workers/index.js';
 import { cloudflaredVersion, findCloudflared } from './services/cloudflared.js';
 import {
@@ -243,16 +244,27 @@ export async function refreshCatalogPage(justDeployed: string): Promise<boolean>
  * private key link only when that email cannot be determined, and `public: true` still opts out.
  */
 export async function publishCatalog(
-  opts: { name?: string; project?: string; access?: string[]; public?: boolean; title?: string } = {},
+  opts: { name?: string; project?: string; access?: string[]; public?: boolean; title?: string; manage?: boolean } = {},
 ): Promise<DeployResult> {
   const c = await readCatalog();
   const access = opts.access ?? (opts.public ? undefined : ((await accountEmail()) ?? undefined));
   const states = new Map(listDeploys().map((s) => [s.name, s]));
   const name = slug(opts.name ?? readConfig().catalogDeploy ?? 'cloudfacts');
+  // The catalog is the index, not one of the sites it lists.
+  c.projects = c.projects.map((p) => ({ ...p, deploys: p.deploys.filter((d) => d.name !== name) })).filter((p) => p.deploys.length > 0);
   withLocalSecrets(c, states, Boolean(access));
   // behind sign-in, the page is also where things get turned off: its Worker needs the API token for that
   const token = credentials()?.token;
   const control = access && token ? { accountId: c.accountId, token, targets: withControl(c, states, name) } : null;
+  const manage = opts.manage ?? readConfig().catalogManage ?? false;
+  if (control && manage) {
+    const names = c.projects
+      .flatMap((p) => p.deploys)
+      .filter((d) => !d.untracked)
+      .map((d) => d.name);
+    control.targets.manager = { ...(await ensureCatalogManager()), names };
+    for (const d of c.projects.flatMap((p) => p.deploys)) d.removable = names.includes(d.name);
+  }
   const shots = await snapshots(
     c.projects.flatMap((p) => p.deploys).map((d) => ({ name: d.name, url: d.url, visibility: d.visibility })),
     states,
@@ -276,13 +288,14 @@ export async function publishCatalog(
     project: opts.project ?? 'cloudfact',
     control,
   });
-  writeConfig({ ...readConfig(), catalogDeploy: result.name });
+  writeConfig({ ...readConfig(), catalogDeploy: result.name, catalogManage: manage });
   // marks the page so any machine can find it later and keep it current
   await tagWorker(result.name, {
     project: opts.project ?? 'cloudfact',
     visibility: result.access ? 'access' : result.privateUrl ? 'private' : 'public',
     kind: 'static',
     catalog: true,
+    bytes: result.bytes ?? null,
   }).catch(() => {});
   return result;
 }
@@ -411,7 +424,7 @@ export async function remove(name: string): Promise<{ name: string; removed: tru
   if (!s) throw new Error(`deploy "${name}" does not exist`);
   let remote: string | undefined;
   if (s.backend === 'tunnel') await stopTunnel(name);
-  if (s.backend === 'workers' && s.status === 'deployed') remote = await deleteWorker(name);
+  if (s.backend === 'workers' || s.access || s.url?.includes('.workers.dev')) remote = await deleteWorker(name);
   removeDeployDir(name);
   await refreshCatalogPage(name);
   return { name, removed: true, remote };

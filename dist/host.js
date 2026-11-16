@@ -3,7 +3,7 @@ import { createRequire as __cloudfactRequire } from 'node:module'; const require
 // src/backends/tunnel/host.ts
 import fs7 from "fs";
 import http2 from "http";
-import path6 from "path";
+import path7 from "path";
 import { spawn } from "child_process";
 
 // src/config.ts
@@ -117,7 +117,7 @@ function patchState(name2, patch) {
 // src/backends/workers/index.ts
 import crypto2 from "crypto";
 import fs5 from "fs";
-import path4 from "path";
+import path5 from "path";
 
 // src/services/wrangler.ts
 import fs4 from "fs";
@@ -289,7 +289,7 @@ const answer = (status, body) => reply(status, JSON.stringify(body), { 'content-
 function controlTargets(env) {
   try {
     const t = JSON.parse(env.CLOUDFACT_CONTROL_TARGETS || '{}');
-    return { workers: Array.isArray(t.workers) ? t.workers : [], tunnels: t.tunnels && typeof t.tunnels === 'object' ? t.tunnels : {} };
+    return { workers: Array.isArray(t.workers) ? t.workers : [], tunnels: t.tunnels && typeof t.tunnels === 'object' ? t.tunnels : {}, manager: t.manager };
   } catch {
     return { workers: [], tunnels: {} };
   }
@@ -327,6 +327,18 @@ async function switchTunnel(t, on) {
   if (!res.ok) throw new Error('the tunnel answered HTTP ' + res.status);
   return (await res.json()).on !== false;
 }
+async function manageCatalog(manager, path, body) {
+  const res = await fetch(manager.url + path, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: { authorization: 'Bearer ' + manager.key, cookie: 'cloudfact_access=' + manager.cookieKey, 'content-type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(120000),
+  });
+  let data;
+  try { data = await res.json(); } catch { throw new Error('The management service did not answer. Try again.'); }
+  if (!res.ok) throw new Error(data.message || data.error || 'HTTP ' + res.status);
+  return data;
+}
 async function control(request, env, url) {
   if (env.CLOUDFACT_CONTROL !== '1' || !env.CLOUDFACT_ACCOUNT_ID || !env.CLOUDFACT_API_TOKEN) return answer(404, { error: 'not_enabled' });
   const origin = request.headers.get('origin');
@@ -347,7 +359,21 @@ async function control(request, env, url) {
           }
         }),
       );
+      if (targets.manager) {
+        try {
+          const state = await manageCatalog(targets.manager, '/state');
+          for (const name of targets.manager.names) if (!state.names.includes(name)) deploys[name] = { removed: true };
+        } catch { /* the account's switches still work if the publishing machine is unreachable */ }
+      }
       return answer(200, { deploys });
+    }
+    if (['/.cloudfact/remove', '/.cloudfact/project'].includes(url.pathname) && request.method === 'POST') {
+      let body;
+      try { body = await request.json(); } catch { return answer(400, { error: 'bad_request' }); }
+      if (!body || typeof body.name !== 'string') return answer(400, { error: 'bad_request' });
+      if (!targets.manager || !targets.manager.names.includes(body.name)) return answer(404, { error: 'unknown' });
+      if (url.pathname.endsWith('/remove') && body.confirm !== body.name) return answer(400, { error: 'confirmation_required' });
+      return answer(200, await manageCatalog(targets.manager, url.pathname.replace('/.cloudfact', ''), body));
     }
     if (url.pathname === '/.cloudfact/power' && request.method === 'POST') {
       let body = null;
@@ -1053,15 +1079,18 @@ function accessVars(app) {
   ];
 }
 
+// src/services/catalog.ts
+import path4 from "path";
+
 // src/backends/workers/index.ts
 function refreshAccessProxyOrigin(name2, origin) {
   const dir2 = deployDir(name2);
-  const config = path4.join(dir2, "worker", "wrangler.jsonc");
+  const config = path5.join(dir2, "worker", "wrangler.jsonc");
   const s = readState(name2);
   if (!fs5.existsSync(config) || !s?.access) return;
   const r = runWrangler(["deploy", "--config", config, ...accessVars(s.access), "--var", `CLOUDFACT_ORIGIN:${origin}`], {
-    cwd: path4.join(dir2, "worker"),
-    logFile: path4.join(dir2, "wrangler.log")
+    cwd: path5.join(dir2, "worker"),
+    logFile: path5.join(dir2, "wrangler.log")
   });
   if (r.status !== 0) throw new Error(`wrangler deploy failed:
 ${r.text.slice(-800)}`);
@@ -1187,7 +1216,7 @@ function createProxy(opts) {
 
 // src/backends/tunnel/static-server.ts
 import fs6 from "fs";
-import path5 from "path";
+import path6 from "path";
 var MIME = {
   ".html": "text/html; charset=utf-8",
   ".htm": "text/html; charset=utf-8",
@@ -1254,13 +1283,13 @@ function safeResolve(root, urlPath) {
   if (decoded.includes("\0")) return null;
   const parts = decoded.split("/").filter(Boolean);
   if (parts.some((p) => p === ".." || p.startsWith("."))) return null;
-  const abs = path5.resolve(root, ...parts);
-  if (abs !== root && !abs.startsWith(root + path5.sep)) return null;
+  const abs = path6.resolve(root, ...parts);
+  if (abs !== root && !abs.startsWith(root + path6.sep)) return null;
   return abs;
 }
 function createStaticHandler(opts) {
-  const root = opts.root ? path5.resolve(opts.root) : null;
-  const file = opts.file ? path5.resolve(opts.file) : null;
+  const root = opts.root ? path6.resolve(opts.root) : null;
+  const file = opts.file ? path6.resolve(opts.file) : null;
   const gate2 = opts.gate ?? staticGate(opts.key, opts.cookieName);
   return (req, res) => {
     const method = req.method ?? "GET";
@@ -1269,7 +1298,7 @@ function createStaticHandler(opts) {
     if (method !== "GET" && method !== "HEAD") return send2(res, 405, "method not allowed");
     let abs;
     if (opts.mode === "file") {
-      const allowed = /* @__PURE__ */ new Set(["/", "/index.html", `/${path5.basename(file ?? "")}`]);
+      const allowed = /* @__PURE__ */ new Set(["/", "/index.html", `/${path6.basename(file ?? "")}`]);
       if (!allowed.has(url.pathname)) return send2(res, 404, "not found");
       abs = file;
     } else {
@@ -1284,7 +1313,7 @@ function createStaticHandler(opts) {
     }
     if (stat.isDirectory()) {
       if (!url.pathname.endsWith("/")) return send2(res, 301, "", { Location: `${url.pathname}/${url.search}` });
-      const index = path5.join(abs, "index.html");
+      const index = path6.join(abs, "index.html");
       if (fs6.existsSync(index)) {
         abs = index;
         stat = fs6.statSync(index);
@@ -1299,7 +1328,7 @@ function createStaticHandler(opts) {
     }
     res.writeHead(200, {
       ...BASE_HEADERS,
-      "Content-Type": MIME[path5.extname(abs).toLowerCase()] ?? "application/octet-stream",
+      "Content-Type": MIME[path6.extname(abs).toLowerCase()] ?? "application/octet-stream",
       "Content-Length": stat.size,
       ETag: etag,
       "Last-Modified": stat.mtime.toUTCString()
@@ -1422,7 +1451,7 @@ function startSshForward(localPort) {
   if (port) args.push("-p", String(port));
   if (identity) args.push("-i", identity);
   args.push(destination);
-  const logFd = fs7.openSync(path6.join(dir, "ssh.log"), "a");
+  const logFd = fs7.openSync(path7.join(dir, "ssh.log"), "a");
   ssh = spawn("ssh", args, { stdio: ["ignore", logFd, logFd], windowsHide: true });
   fs7.closeSync(logFd);
   patchState(name, { sshPid: ssh.pid ?? null });
@@ -1444,7 +1473,7 @@ function startTunnel(port) {
     patchState(name, { status: "error", error: "cloudflared not found" });
     return;
   }
-  const logFd = fs7.openSync(path6.join(dir, "tunnel.log"), "a");
+  const logFd = fs7.openSync(path7.join(dir, "tunnel.log"), "a");
   tunnel = spawn(bin, ["tunnel", "--url", `http://127.0.0.1:${port}`, "--no-autoupdate", "--protocol", "http2"], {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true

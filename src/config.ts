@@ -59,6 +59,8 @@ export interface Config {
   cloudflareTeamDomain?: string;
   /** Name of the published catalog page, so deploys can keep it current. */
   catalogDeploy?: string | null;
+  /** Keep the local catalog management bridge running for real deletion from the page. */
+  catalogManage?: boolean;
   /** The "you can have an index of all this" hint is shown once, never again. */
   catalogHintShown?: boolean;
 }

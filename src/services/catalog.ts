@@ -7,12 +7,13 @@
  * Quick tunnels have no account-side resource: they exist only while the machine that started them runs,
  * so they can only ever come from local state (`local: true`, `inAccount: false`).
  */
+import path from 'node:path';
 import { readConfig, writeConfig, type Config } from '../config.js';
 import { credentials, oauthToken } from './wrangler.js';
-import { listDeploys } from './state.js';
+import { deployDir, listDeploys, pathBytes } from './state.js';
 import { discoverTunnels, tunnelName } from './local-tunnels.js';
 import { LOGIN_PATH } from './access.js';
-import type { CatalogEntry, CatalogResult, DeployKind, DeployState, Visibility } from '../types.js';
+import type { CatalogEntry, CatalogResult, DeployKind, DeployOrigin, DeployState, Visibility } from '../types.js';
 
 const API = 'https://api.cloudflare.com/client/v4';
 export const TAG = 'cloudfact';
@@ -21,6 +22,8 @@ const VIS_TAG = 'cloudfact:vis:';
 /** The published catalog page marks itself, so any machine can find and refresh it. */
 export const CATALOG_TAG = 'cloudfact:catalog';
 const KIND_TAG = 'cloudfact:kind:';
+/** Size of the published files, so any machine can show it without the files at hand. */
+const SIZE_TAG = 'cloudfact:size:';
 /** A Worker turned off: its workers.dev address is disabled, and the tag lets one listing tell. */
 export const OFF_TAG = 'cloudfact:off';
 
@@ -48,7 +51,14 @@ export function slugProject(input: string): string {
  * key-gated link, or Cloudflare Access sign-in).
  */
 export function tagsFor(
-  opts: { project?: string | null; visibility?: Visibility | null; kind?: DeployKind | null; catalog?: boolean; off?: boolean } = {},
+  opts: {
+    project?: string | null;
+    visibility?: Visibility | null;
+    kind?: DeployKind | null;
+    catalog?: boolean;
+    off?: boolean;
+    bytes?: number | null;
+  } = {},
 ): string[] {
   const tags = [TAG];
   if (opts.project) tags.push(projectTag(opts.project));
@@ -56,6 +66,7 @@ export function tagsFor(
   if (opts.kind) tags.push(KIND_TAG + opts.kind);
   if (opts.catalog) tags.push(CATALOG_TAG);
   if (opts.off) tags.push(OFF_TAG);
+  if (typeof opts.bytes === 'number' && Number.isFinite(opts.bytes) && opts.bytes >= 0) tags.push(SIZE_TAG + Math.round(opts.bytes));
   return tags;
 }
 
@@ -115,7 +126,13 @@ async function api<T>(token: string, method: string, path: string, body?: unknow
 /** Marks a worker as cloudfact's, with its project, visibility and kind. Idempotent; a deploy resets tags. */
 export async function tagWorker(
   name: string,
-  opts: { project?: string | null; visibility?: Visibility | null; kind?: DeployKind | null; catalog?: boolean } = {},
+  opts: {
+    project?: string | null;
+    visibility?: Visibility | null;
+    kind?: DeployKind | null;
+    catalog?: boolean;
+    bytes?: number | null;
+  } = {},
   fetchImpl?: typeof fetch,
 ): Promise<void> {
   const b = bearer();
@@ -131,6 +148,28 @@ export function visibilityOf(s: DeployState): Visibility {
 export function kindOf(s: DeployState): DeployKind {
   return s.mode === 'proxy' ? 'app' : 'static';
 }
+
+/**
+ * Size of what a deploy publishes, from this machine's files: the staged copy a Worker was deployed from,
+ * or the folder/file a tunnel serves. Apps behind a proxy upload nothing, so they have no size.
+ */
+export function localBytes(s: DeployState): number | null {
+  if (s.mode === 'proxy') return null;
+  if (typeof s.bytes === 'number') return s.bytes;
+  if (s.backend === 'workers') return pathBytes(path.join(deployDir(s.name), 'site'));
+  return pathBytes(s.mode === 'file' ? s.file : s.root);
+}
+
+/** Where a locally recorded deploy is served from. */
+export function originOf(s: DeployState): DeployOrigin {
+  if (s.backend !== 'tunnel') return 'cloudflare';
+  return s.ssh ? 'ssh' : 'vm';
+}
+
+const sizeFromTags = (tags: string[] | undefined): number | null => {
+  const n = Number(tagValue(tags, SIZE_TAG));
+  return tagValue(tags, SIZE_TAG) !== null && Number.isFinite(n) && n >= 0 ? n : null;
+};
 
 interface AccessAppRow {
   id: string;
@@ -178,6 +217,7 @@ export async function catalog(opts: { project?: string; fetchImpl?: typeof fetch
     const host = url ? new URL(url).host : null;
     const app = host ? (apps.find((a) => a.domain === host + LOGIN_PATH) ?? apps.find((a) => a.domain === host)) : undefined;
     const visibility = (tagValue(s.tags, VIS_TAG) as Visibility | null) ?? (state ? visibilityOf(state) : app ? 'access' : 'public');
+    const kind = (tagValue(s.tags, KIND_TAG) as DeployKind | null) ?? (state ? kindOf(state) : s.has_assets ? 'static' : 'app');
     entries.push({
       name: s.id,
       project: projectFromTags(s.tags) ?? state?.project ?? null,
@@ -186,8 +226,11 @@ export async function catalog(opts: { project?: string; fetchImpl?: typeof fetch
       local: Boolean(state),
       access: app ? { emails: state?.access?.emails ?? [], appId: app.id } : null,
       visibility,
-      kind: (tagValue(s.tags, KIND_TAG) as DeployKind | null) ?? (state ? kindOf(state) : s.has_assets ? 'static' : 'app'),
+      kind,
       hasAssets: Boolean(s.has_assets),
+      bytes: kind === 'app' ? null : (sizeFromTags(s.tags) ?? (state ? localBytes(state) : null)),
+      // without a local record, a Worker with no files of its own is the sign-in front of a tunnel elsewhere
+      origin: state ? originOf(state) : kind === 'app' && !s.has_assets ? 'vm' : 'cloudflare',
       createdAt: s.created_on ?? null,
       modifiedAt: s.modified_on ?? null,
       backend: state?.backend ?? 'workers',
@@ -209,6 +252,8 @@ export async function catalog(opts: { project?: string; fetchImpl?: typeof fetch
       visibility: visibilityOf(s),
       kind: kindOf(s),
       hasAssets: s.mode !== 'proxy',
+      bytes: localBytes(s),
+      origin: originOf(s),
       createdAt: s.startedAt ?? null,
       modifiedAt: s.urlAt ?? s.startedAt ?? null,
       backend: 'tunnel',
@@ -223,6 +268,7 @@ export async function catalog(opts: { project?: string; fetchImpl?: typeof fetch
   if (opts.scanLocal !== false) {
     // a tunnel can also be the private origin behind an Access proxy: that one belongs to its deploy
     const known = new Set<string>();
+    for (const s of listDeploys({ includeInternal: true })) if (s.internal && s.url) known.add(s.url);
     for (const e of entries) if (e.url) known.add(e.url);
     for (const s of local.values()) {
       if (s.url) known.add(s.url);
@@ -240,6 +286,8 @@ export async function catalog(opts: { project?: string; fetchImpl?: typeof fetch
         visibility: t.gated ? 'private' : t.challenges ? 'app-login' : 'public',
         kind: 'app',
         hasAssets: false,
+        bytes: null,
+        origin: 'vm',
         createdAt: null,
         modifiedAt: null,
         backend: 'tunnel',
@@ -302,7 +350,7 @@ export async function setProject(name: string, project: string | null, fetchImpl
     b.token,
     'PUT',
     `/accounts/${b.accountId}/workers/scripts/${encodeURIComponent(name)}/tags`,
-    tagsFor({ project, visibility: current.visibility, kind: current.kind, off: current.off }),
+    tagsFor({ project, visibility: current.visibility, kind: current.kind, off: current.off, bytes: current.bytes }),
     fetchImpl,
   );
   const found = (await catalog({ fetchImpl })).projects.flatMap((p) => p.deploys).find((d) => d.name === name);

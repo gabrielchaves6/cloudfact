@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { readConfig } from '../../config.js';
-import { deployDir, readState, summarize, writeState } from '../../services/state.js';
+import { deployDir, pathBytes, readState, summarize, writeState } from '../../services/state.js';
 import { credentials, runWrangler } from '../../services/wrangler.js';
 import { WORKER_SOURCE, wranglerConfig } from './gate-worker.js';
 import { PROXY_WORKER_SOURCE, proxyWranglerConfig } from './proxy-worker.js';
@@ -114,6 +114,7 @@ export async function deployWorkers(t: WorkersTarget): Promise<DeployResult> {
     status: 'deploying',
     startedAt: prev?.startedAt ?? new Date().toISOString(),
     files,
+    bytes: pathBytes(site) ?? undefined,
   });
   const compatibilityDate = new Date().toISOString().slice(0, 10);
   const logFile = path.join(dir, 'wrangler.log');
@@ -192,6 +193,7 @@ export async function deployWorkers(t: WorkersTarget): Promise<DeployResult> {
       project: t.project ?? null,
       visibility: accessCtx ? 'access' : t.private ? 'private' : 'public',
       kind: t.mode === 'proxy' ? 'app' : 'static',
+      bytes: readState(t.name)?.bytes ?? null,
     });
   } catch {
     /* best effort: a deploy must not fail because tagging did */
@@ -243,16 +245,19 @@ export function rotateWorkersKey(name: string, key: string, keyExpiresAt: string
 export async function deleteWorker(name: string): Promise<string> {
   const notes: string[] = [];
   const s = readState(name);
+  const cwd = path.join(deployDir(name), 'empty');
+  fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });
+  const r = runWrangler(['delete', '--name', name, '--force'], { cwd });
+  if (r.status !== 0) throw new Error(`failed to delete worker: ${r.text.slice(-400)}`);
+  notes.push('worker deleted');
   if (s?.access?.appId) {
     try {
       await deleteAccessApp(accessContext(), s.access.appId);
       notes.push('access app deleted');
     } catch (e) {
-      notes.push(`failed to delete access app: ${(e as Error).message}`);
+      throw new Error(`worker deleted, but failed to delete access app: ${(e as Error).message}`, { cause: e });
     }
   }
-  const r = runWrangler(['delete', '--name', name, '--force'], { cwd: path.join(deployDir(name), 'empty') });
-  notes.unshift(r.status === 0 ? 'worker deleted' : `failed to delete worker: ${r.text.slice(-400)}`);
   return notes.join('; ');
 }
 

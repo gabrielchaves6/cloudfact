@@ -6,7 +6,7 @@ import { tmpDir } from './helpers.js';
 /** Account with two cloudfact workers (one tagged, one from an older version) and one unrelated worker. */
 function fakeAccount() {
   const tags = new Map<string, string[]>([
-    ['painel', ['cloudfact', 'cloudfact:project:migracao', 'cloudfact:vis:access', 'cloudfact:kind:static']],
+    ['painel', ['cloudfact', 'cloudfact:project:migracao', 'cloudfact:vis:access', 'cloudfact:kind:static', 'cloudfact:size:2621440']],
     ['api-live', ['cloudfact', 'cloudfact:project:migracao', 'cloudfact:vis:private', 'cloudfact:kind:app']],
     ['legado', ['cloudfact']],
     ['nao-e-meu', []],
@@ -103,6 +103,38 @@ describe('account catalog', () => {
     expect(t).toMatchObject({ inAccount: false, local: true, backend: 'tunnel', kind: 'app', visibility: 'private' });
   });
 
+  it('shows how big each cloudfact is and where it is served from', async () => {
+    const { catalog } = await import('../src/cloudfact.js');
+    const all = (await catalog()).projects.flatMap((p) => p.deploys);
+    const by = (name: string) => all.find((d) => d.name === name)!;
+    expect(by('painel')).toMatchObject({ bytes: 2621440, origin: 'cloudflare' });
+    expect(by('legado')).toMatchObject({ bytes: null, origin: 'cloudflare' });
+    // a Worker with no files of its own and no local record is the sign-in front of a tunnel
+    expect(by('api-live')).toMatchObject({ bytes: null, origin: 'vm' });
+    expect(by('tunel-local')).toMatchObject({ bytes: null, origin: 'vm' });
+  });
+
+  it('measures a deploy from the files it published on this machine', async () => {
+    const { localBytes, originOf } = await import('../src/services/catalog.js');
+    const site = path.join(home, 'deploys', 'sitio', 'site');
+    fs.mkdirSync(path.join(site, 'img'), { recursive: true });
+    fs.writeFileSync(path.join(site, 'index.html'), 'x'.repeat(1000));
+    fs.writeFileSync(path.join(site, 'img', 'a.png'), 'y'.repeat(2500));
+    const s = { name: 'sitio', backend: 'workers', mode: 'dir', root: null, file: null, status: 'deployed', startedAt: '' } as const;
+    expect(localBytes(s)).toBe(3500);
+    expect(localBytes({ ...s, bytes: 42 })).toBe(42);
+    expect(localBytes({ ...s, backend: 'tunnel', mode: 'proxy' })).toBeNull();
+    expect(originOf(s)).toBe('cloudflare');
+    expect(originOf({ ...s, backend: 'tunnel' })).toBe('vm');
+    expect(originOf({ ...s, backend: 'tunnel', ssh: { destination: 'seedbox' } })).toBe('ssh');
+  });
+
+  it('keeps the size tag when a deploy moves to another project', async () => {
+    const { setProject } = await import('../src/cloudfact.js');
+    await setProject('painel', 'migracao');
+    expect(api.tags.get('painel')).toContain('cloudfact:size:2621440');
+  });
+
   it('filters by project', async () => {
     const { catalog } = await import('../src/cloudfact.js');
     const c = await catalog({ project: 'migracao' });
@@ -126,12 +158,19 @@ describe('account catalog', () => {
     const { catalog } = await import('../src/cloudfact.js');
     const { galleryHtml } = await import('../src/services/gallery.js');
     const html = galleryHtml(await catalog());
+    // Filtering and sorting act on one unified list, with the project beside each name.
+    expect(html).toContain('[hidden]{display:none!important}');
     expect(html).toContain('CloudFacts');
     expect(html).toContain('painel');
     expect(html).toContain('Sign-in');
     expect(html).toContain('Server app');
     expect(html).toContain('Static');
     expect(html).toContain('local tunnel');
+    expect(html).toContain('id="cloudfacts" role="rowgroup"');
+    expect(html).toContain('class="project-cell"');
+    expect(html).toContain('data-sort="project"');
+    expect(html).toContain('aria-label="Filtrar Atualizado"');
+    expect(html).not.toContain('<section>');
     expect(html).not.toContain('nao-e-meu');
     // gated deploys must not be framed
     expect(html).not.toContain('<iframe src="https://painel.example-sub.workers.dev"');
