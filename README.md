@@ -185,6 +185,20 @@ with the list of what it may switch; it does nothing else with it:
 Tunnels started by a cloudfact older than this feature have no switch until they are started again
 (`--restart`); their cards simply have no ✕.
 
+**Everything on this machine at once.** Without a name, `off` and `on` put cloudfact away and get it
+back out, for when you are done with it here until some unplanned day:
+
+```
+cloudfact off             # every deploy here goes off, and nothing keeps running
+cloudfact on              # what that off turned off comes back
+```
+
+`off` turns each Worker off, as above, and ends every tunnel's processes, then remembers what it turned
+off (in `~/.cloudfact/config.json`). `on` brings back exactly that: Workers on the very same link, tunnels
+started again from the same folder or port, on a new link with a new key (a quick tunnel cannot keep its
+`trycloudflare.com` address once its process ends). What was already off stays off, and anything that
+cannot be switched is reported while the rest still go; the next `on` tries it again.
+
 ## Look
 
 The pages cloudfact generates carry the CloudFacts identity: the mark, CloudFacts Sans and an off-white
@@ -207,6 +221,7 @@ cloudfact deploy [path] [--name n] [--public] [--expires 24h] [--backend auto|tu
 cloudfact expose <port> [--name n] [--public] [--expires 24h] [--ssh user@host] [--ssh-port 22] [--identity key] [--strict-host-key] [--restart] [--json]
 cloudfact rotate <name> [--expires 24h]
 cloudfact off <name> | on <name>
+cloudfact off | on                # no name: everything on this machine
 cloudfact list | status <name> | stop <name>|--all | rm <name> | logs <name> [-n 40]
 cloudfact doctor | setup | login --device | login --token T [--account-id ID] | logout
 cloudfact config get | set <key> <value>

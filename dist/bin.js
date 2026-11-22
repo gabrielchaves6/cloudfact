@@ -202,7 +202,19 @@ function writeState(name, state) {
   fs3.mkdirSync(dir, { recursive: true, mode: 448 });
   const tmp = path3.join(dir, `.state.${process.pid}.tmp`);
   fs3.writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", { mode: 384 });
-  fs3.renameSync(tmp, path3.join(dir, "state.json"));
+  renameOver(tmp, path3.join(dir, "state.json"));
+}
+function renameOver(from, to, tries = 50) {
+  for (let i = 1; ; i++) {
+    try {
+      fs3.renameSync(from, to);
+      return;
+    } catch (e) {
+      const code = e.code;
+      if (i >= tries || !(code === "EPERM" || code === "EACCES" || code === "EBUSY")) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
+  }
 }
 function patchState(name, patch) {
   const current = readState(name);
@@ -2849,6 +2861,72 @@ async function powerTunnel(s, on) {
   }
   patchState(name, { off: !on });
   return { name, on };
+}
+async function powerMachine(on) {
+  const out = { on, switched: [], failed: [] };
+  const parked = new Set(readConfig().parked ?? []);
+  if (on) {
+    for (const name of parked) {
+      try {
+        const s = readState(name);
+        if (s) out.switched.push(await wake(s));
+        parked.delete(name);
+      } catch (e) {
+        out.failed.push({ name, error: e.message });
+      }
+    }
+  } else {
+    const deploys = listDeploys();
+    const offInAccount = deploys.some((s) => s.backend === "workers") ? await catalog().then((c) => new Set(c.projects.flatMap((p) => p.deploys.filter((d) => d.off).map((d) => d.name)))).catch(() => /* @__PURE__ */ new Set()) : /* @__PURE__ */ new Set();
+    for (const s of deploys) {
+      try {
+        if (s.backend === "workers") {
+          if (s.status !== "deployed" || offInAccount.has(s.name)) continue;
+          await switchWorker(s.name, false, { known: true });
+        } else {
+          if (!isLive(s)) continue;
+          await stopTunnel(s.name);
+          if (s.access) await switchWorker(s.name, false, { known: true });
+          if (s.off) {
+            out.switched.push({ name: s.name, backend: s.backend, note: "was already off: stopped, and stays off" });
+            continue;
+          }
+        }
+        out.switched.push({ name: s.name, backend: s.backend });
+        parked.add(s.name);
+      } catch (e) {
+        out.failed.push({ name: s.name, error: e.message });
+      }
+    }
+  }
+  writeConfig({ ...readConfig(), parked: [...parked] });
+  if (on && out.switched.length) await refreshCatalogPage("");
+  return out;
+}
+async function wake(s) {
+  const { name, backend } = s;
+  if (backend === "workers") {
+    await switchWorker(name, true, { known: true });
+    return { name, backend, url: s.privateUrl ?? s.url };
+  }
+  if (s.keyExpiresAt && Date.parse(s.keyExpiresAt) <= Date.now())
+    return { name, backend, note: `not started: its private key expired on ${s.keyExpiresAt}; deploy it again with a new --expires` };
+  const r = s.access && s.targetPort ? await expose({ port: s.targetPort, name, ssh: s.ssh, access: s.access.emails, project: s.project ?? void 0 }) : await deployTunnel({
+    name,
+    mode: s.mode,
+    root: s.root,
+    file: s.file,
+    targetPort: s.targetPort,
+    ssh: s.ssh,
+    private: Boolean(s.key),
+    keyExpiresAt: s.keyExpiresAt,
+    project: s.project,
+    restart: false,
+    timeoutMs: 45e3
+  });
+  if (s.access) await switchWorker(name, true, { known: true });
+  if (s.creds) patchState(name, { creds: s.creds });
+  return { name, backend, url: r.privateUrl ?? r.url };
 }
 async function remove(name) {
   const s = readState(name);
@@ -25453,6 +25531,9 @@ usage:
   cloudfact status <name> [--json]
   cloudfact off <name> | on <name>               (turn a cloudfact off: its link stops answering, nothing is
                                                   deleted; on brings the same link back. Also on the catalog page)
+  cloudfact off | on                             (no name: put cloudfact away on this machine. Every deploy goes
+                                                  off and nothing keeps running; on brings back what off turned
+                                                  off: Workers on the same link, tunnels on a new one)
   cloudfact stop <name> | --all
   cloudfact rm <name>
   cloudfact logs <name> [-n 40]
@@ -25640,7 +25721,20 @@ expires: ${r.keyExpiresAt}` : ""}`);
     }
     case "off":
     case "on": {
-      const name = need(rest[0], "the deploy name");
+      const name = rest[0];
+      if (!name) {
+        const r2 = await powerMachine(cmd === "on");
+        if (values.json) print(r2);
+        else {
+          if (!r2.switched.length && !r2.failed.length)
+            console.log(r2.on ? "nothing to bring back: `cloudfact off` had not turned anything off" : "nothing is on here");
+          for (const s of r2.switched)
+            console.log(`${r2.on ? "on" : "off"}: ${s.name}${s.url ? ` ${s.url}` : ""}${s.note ? ` (${s.note})` : ""}`);
+          for (const f of r2.failed) console.log(`not switched: ${f.name}: ${f.error}`);
+          if (!r2.on && r2.switched.length) console.log("`cloudfact on` brings them back.");
+        }
+        return r2.failed.length ? 1 : 0;
+      }
       const r = await power(name, cmd === "on");
       if (values.json) print(r);
       else

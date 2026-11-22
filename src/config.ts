@@ -61,6 +61,8 @@ export interface Config {
   catalogDeploy?: string | null;
   /** The "you can have an index of all this" hint is shown once, never again. */
   catalogHintShown?: boolean;
+  /** Deploys that `cloudfact off` (no name) turned off, for `cloudfact on` to bring back. */
+  parked?: string[];
 }
 
 export function readConfig(): Config {

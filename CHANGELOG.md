@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- `cloudfact off` and `cloudfact on` without a name: put cloudfact away on this machine and get it back out. Off turns every live deploy here off and leaves nothing running (Workers lose their address; tunnels end their processes) and remembers what it turned off; on brings back exactly that, Workers on the same link and tunnels from the same folder or port on a new one. What was already off stays off; what cannot be switched is reported, and the next `on` tries it again.
+
+### Fixed
+
+- Windows: a tunnel could fail to start with `EPERM: operation not permitted, rename … state.json`, because Windows refuses to replace a file while the CLI is reading it. The state write now waits a moment and tries again.
+
 ## [0.12.0] - 2026-10-26
 
 ### Added

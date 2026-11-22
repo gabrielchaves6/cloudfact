@@ -173,3 +173,11 @@ export interface PowerResult {
   on: boolean;
   note?: string;
 }
+
+/** `cloudfact on` / `cloudfact off` without a name: every deploy on this machine at once. */
+export interface MachinePowerResult {
+  on: boolean;
+  /** What was turned off, or brought back, with the link it answers on now. */
+  switched: { name: string; backend: Backend; url?: string | null; note?: string }[];
+  failed: { name: string; error: string }[];
+}

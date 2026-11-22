@@ -18,6 +18,9 @@ usage:
   cloudfact status <name> [--json]
   cloudfact off <name> | on <name>               (turn a cloudfact off: its link stops answering, nothing is
                                                   deleted; on brings the same link back. Also on the catalog page)
+  cloudfact off | on                             (no name: put cloudfact away on this machine. Every deploy goes
+                                                  off and nothing keeps running; on brings back what off turned
+                                                  off: Workers on the same link, tunnels on a new one)
   cloudfact stop <name> | --all
   cloudfact rm <name>
   cloudfact logs <name> [-n 40]
@@ -204,7 +207,20 @@ export async function main(argv: string[]): Promise<number> {
     }
     case 'off':
     case 'on': {
-      const name = need(rest[0], 'the deploy name');
+      const name = rest[0];
+      if (!name) {
+        const r = await cf.powerMachine(cmd === 'on');
+        if (values.json) print(r);
+        else {
+          if (!r.switched.length && !r.failed.length)
+            console.log(r.on ? 'nothing to bring back: `cloudfact off` had not turned anything off' : 'nothing is on here');
+          for (const s of r.switched)
+            console.log(`${r.on ? 'on' : 'off'}: ${s.name}${s.url ? ` ${s.url}` : ''}${s.note ? ` (${s.note})` : ''}`);
+          for (const f of r.failed) console.log(`not switched: ${f.name}: ${f.error}`);
+          if (!r.on && r.switched.length) console.log('`cloudfact on` brings them back.');
+        }
+        return r.failed.length ? 1 : 0;
+      }
       const r = await cf.power(name, cmd === 'on');
       if (values.json) print(r);
       else

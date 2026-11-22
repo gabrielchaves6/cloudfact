@@ -185,6 +185,21 @@ interface PowerResult {
     on: boolean;
     note?: string;
 }
+/** `cloudfact on` / `cloudfact off` without a name: every deploy on this machine at once. */
+interface MachinePowerResult {
+    on: boolean;
+    /** What was turned off, or brought back, with the link it answers on now. */
+    switched: {
+        name: string;
+        backend: Backend;
+        url?: string | null;
+        note?: string;
+    }[];
+    failed: {
+        name: string;
+        error: string;
+    }[];
+}
 
 declare function listDeploys(): DeployState[];
 declare function summarize(state: DeployState): DeploySummary;
@@ -343,6 +358,15 @@ declare function stopAll(): Promise<{
  * Deploying it again also turns it back on.
  */
 declare function power(name: string, on: boolean): Promise<PowerResult>;
+/**
+ * `cloudfact off` and `cloudfact on` without a name: put cloudfact away on this machine, or get it back
+ * out. Off turns every live deploy here off and leaves nothing running: a Worker loses its address, as with
+ * `power`, and a tunnel ends its processes. What it turned off is remembered in the config, and on brings
+ * back exactly that: a Worker on the very same link; a tunnel started again from the same folder or port,
+ * on a new link (a quick tunnel cannot keep its trycloudflare address once its process ends). What was
+ * already off stays off. A deploy that cannot be switched is reported and the rest still go.
+ */
+declare function powerMachine(on: boolean): Promise<MachinePowerResult>;
 declare function remove(name: string): Promise<{
     name: string;
     removed: true;
@@ -407,4 +431,4 @@ interface ToolDefinition<Schema extends ZodRawShape = ZodRawShape> {
 
 declare const tools: ToolDefinition<any>[];
 
-export { type Backend, type BackendChoice, type CatalogEntry, type CatalogResult, type ControlTargets, type Credentials, type DeployKind, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type ExposeOptions, type PowerResult, type SshTarget, type StatusResult, type ToolDefinition, VERSION, type Visibility, catalog, catalogHint, createServer, deploy, doctor, expose, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, power, publishCatalog, readLogs, refreshCatalogPage, remove, resolveBackend, rotate, setCredentials, setMailKey, setProject, setupCodex, status, stop, stopAll, summarize, tools, withControl, withLocalSecrets };
+export { type Backend, type BackendChoice, type CatalogEntry, type CatalogResult, type ControlTargets, type Credentials, type DeployKind, type DeployMode, type DeployOptions, type DeployResult, type DeployState, type DeployStatus, type DeploySummary, type DoctorReport, type ExposeOptions, type MachinePowerResult, type PowerResult, type SshTarget, type StatusResult, type ToolDefinition, VERSION, type Visibility, catalog, catalogHint, createServer, deploy, doctor, expose, installCloudflared, listDeploys, loginWithDevice, loginWithToken, logout, power, powerMachine, publishCatalog, readLogs, refreshCatalogPage, remove, resolveBackend, rotate, setCredentials, setMailKey, setProject, setupCodex, status, stop, stopAll, summarize, tools, withControl, withLocalSecrets };

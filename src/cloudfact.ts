@@ -37,6 +37,7 @@ import type {
   DeployState,
   DeploySummary,
   ExposeOptions,
+  MachinePowerResult,
   PowerResult,
 } from './types.js';
 
@@ -404,6 +405,91 @@ async function powerTunnel(s: DeployState, on: boolean): Promise<PowerResult> {
   }
   patchState(name, { off: !on });
   return { name, on };
+}
+
+/**
+ * `cloudfact off` and `cloudfact on` without a name: put cloudfact away on this machine, or get it back
+ * out. Off turns every live deploy here off and leaves nothing running: a Worker loses its address, as with
+ * `power`, and a tunnel ends its processes. What it turned off is remembered in the config, and on brings
+ * back exactly that: a Worker on the very same link; a tunnel started again from the same folder or port,
+ * on a new link (a quick tunnel cannot keep its trycloudflare address once its process ends). What was
+ * already off stays off. A deploy that cannot be switched is reported and the rest still go.
+ */
+export async function powerMachine(on: boolean): Promise<MachinePowerResult> {
+  const out: MachinePowerResult = { on, switched: [], failed: [] };
+  const parked = new Set(readConfig().parked ?? []);
+  if (on) {
+    for (const name of parked) {
+      try {
+        const s = readState(name);
+        if (s) out.switched.push(await wake(s));
+        parked.delete(name);
+      } catch (e) {
+        out.failed.push({ name, error: (e as Error).message }); // stays parked: the next `on` tries again
+      }
+    }
+  } else {
+    const deploys = listDeploys();
+    // a Worker turned off on its own says so only in its tags
+    const offInAccount = deploys.some((s) => s.backend === 'workers')
+      ? await readCatalog()
+          .then((c) => new Set(c.projects.flatMap((p) => p.deploys.filter((d) => d.off).map((d) => d.name))))
+          .catch(() => new Set<string>())
+      : new Set<string>();
+    for (const s of deploys) {
+      try {
+        if (s.backend === 'workers') {
+          if (s.status !== 'deployed' || offInAccount.has(s.name)) continue;
+          await switchWorker(s.name, false, { known: true });
+        } else {
+          if (!isLive(s)) continue;
+          await stopTunnel(s.name);
+          if (s.access) await switchWorker(s.name, false, { known: true });
+          if (s.off) {
+            out.switched.push({ name: s.name, backend: s.backend, note: 'was already off: stopped, and stays off' });
+            continue;
+          }
+        }
+        out.switched.push({ name: s.name, backend: s.backend });
+        parked.add(s.name);
+      } catch (e) {
+        out.failed.push({ name: s.name, error: (e as Error).message });
+      }
+    }
+  }
+  writeConfig({ ...readConfig(), parked: [...parked] });
+  // off leaves the catalog alone: it went off with everything else, and republishing it would bring it back
+  if (on && out.switched.length) await refreshCatalogPage('');
+  return out;
+}
+
+async function wake(s: DeployState): Promise<MachinePowerResult['switched'][number]> {
+  const { name, backend } = s;
+  if (backend === 'workers') {
+    await switchWorker(name, true, { known: true });
+    return { name, backend, url: s.privateUrl ?? s.url };
+  }
+  if (s.keyExpiresAt && Date.parse(s.keyExpiresAt) <= Date.now())
+    return { name, backend, note: `not started: its private key expired on ${s.keyExpiresAt}; deploy it again with a new --expires` };
+  const r =
+    s.access && s.targetPort
+      ? await expose({ port: s.targetPort, name, ssh: s.ssh, access: s.access.emails, project: s.project ?? undefined })
+      : await deployTunnel({
+          name,
+          mode: s.mode,
+          root: s.root,
+          file: s.file,
+          targetPort: s.targetPort,
+          ssh: s.ssh,
+          private: Boolean(s.key),
+          keyExpiresAt: s.keyExpiresAt,
+          project: s.project,
+          restart: false,
+          timeoutMs: 45_000,
+        });
+  if (s.access) await switchWorker(name, true, { known: true });
+  if (s.creds) patchState(name, { creds: s.creds }); // a fresh start writes a fresh record
+  return { name, backend, url: r.privateUrl ?? r.url };
 }
 
 export async function remove(name: string): Promise<{ name: string; removed: true; remote?: string }> {

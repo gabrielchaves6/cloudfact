@@ -21599,7 +21599,19 @@ function writeState(name, state) {
   fs3.mkdirSync(dir, { recursive: true, mode: 448 });
   const tmp = path3.join(dir, `.state.${process.pid}.tmp`);
   fs3.writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n", { mode: 384 });
-  fs3.renameSync(tmp, path3.join(dir, "state.json"));
+  renameOver(tmp, path3.join(dir, "state.json"));
+}
+function renameOver(from, to, tries = 50) {
+  for (let i = 1; ; i++) {
+    try {
+      fs3.renameSync(from, to);
+      return;
+    } catch (e) {
+      const code = e.code;
+      if (i >= tries || !(code === "EPERM" || code === "EACCES" || code === "EBUSY")) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
+  }
 }
 function patchState(name, patch) {
   const current = readState(name);
