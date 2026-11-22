@@ -173,7 +173,12 @@ describe('sign-in by email: the code mailed through Resend and checked in the LO
     vi.useFakeTimers({ toFake: ['setTimeout'] });
     resendStatus = [503, 200];
     const first = ask(OWNER);
-    for (let i = 0; i < 40 && mails.length < 2; i++) await vi.advanceTimersByTimeAsync(250); // the retry waits 3 s
+    // the retry waits 3 s, scheduled only once the first try's real async work (crypto, the store) is done:
+    // keep the clock moving until it has mailed, bounded by real time, not by a count a busy runner outlasts
+    for (const end = Date.now() + 15_000; mails.length < 2 && Date.now() < end;) {
+      await vi.advanceTimersByTimeAsync(250);
+      await new Promise((r) => setImmediate(r));
+    }
     expect((await first).status).toBe(200);
     expect(mails).toHaveLength(2);
     vi.useRealTimers();
