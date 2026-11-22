@@ -35,7 +35,25 @@ export function writeState(name: string, state: DeployState): void {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const tmp = path.join(dir, `.state.${process.pid}.tmp`);
   fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + '\n', { mode: 0o600 });
-  fs.renameSync(tmp, path.join(dir, 'state.json'));
+  renameOver(tmp, path.join(dir, 'state.json'));
+}
+
+/**
+ * Windows refuses to replace a file another process has open (EPERM, EACCES or EBUSY), and the CLI reads
+ * state.json every few hundred milliseconds while a tunnel host writes it. The read is over in a moment,
+ * so the rename waits a little and tries again.
+ */
+export function renameOver(from: string, to: string, tries = 50): void {
+  for (let i = 1; ; i++) {
+    try {
+      fs.renameSync(from, to);
+      return;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (i >= tries || !(code === 'EPERM' || code === 'EACCES' || code === 'EBUSY')) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
+  }
 }
 
 export function patchState(name: string, patch: Partial<DeployState>): DeployState {

@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { tmpDir } from './helpers.js';
 
 let home: string;
@@ -43,5 +43,33 @@ describe('state', () => {
       hostPid: null,
     });
     expect(effectiveState('y')?.status).toBe('starting');
+  });
+  it('a rename refused while another process has the file open is tried again; anything else is thrown', async () => {
+    const { renameOver } = await import('../src/services/state.js');
+    const busy = Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' });
+    const real = fs.renameSync;
+    let refusals = 2;
+    const spy = vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+      if (refusals-- > 0) throw busy;
+      real(from, to);
+    });
+    try {
+      const from = `${home}/a.tmp`;
+      fs.writeFileSync(from, 'new');
+      renameOver(from, `${home}/a.json`);
+      expect(fs.readFileSync(`${home}/a.json`, 'utf8')).toBe('new');
+      expect(spy).toHaveBeenCalledTimes(3);
+
+      refusals = Infinity;
+      expect(() => renameOver(`${home}/b.tmp`, `${home}/b.json`, 3)).toThrow(/EPERM/);
+      spy.mockImplementation(() => {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      });
+      spy.mockClear();
+      expect(() => renameOver(`${home}/c.tmp`, `${home}/c.json`)).toThrow(/ENOENT/);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
